@@ -16,199 +16,359 @@
 # limitations under the License.
 ###############################################################################
 """
-Record GPS and IMU data
+Generate Planning Path
 """
 
+import argparse
 import atexit
 import logging
 import math
 import os
 import sys
 import time
+import numpy as np
+
+from numpy import genfromtxt
+import scipy.signal as signal
 
 from cyber.python.cyber_py3 import cyber
-from gflags import FLAGS
-
+from cyber.python.cyber_py3 import cyber_time
 from modules.tools.common.logger import Logger
-import modules.tools.common.proto_utils as proto_utils
 from modules.canbus.proto import chassis_pb2
 from modules.common.configs.proto import vehicle_config_pb2
+from modules.common.proto import drive_state_pb2
+from modules.common.proto import pnc_point_pb2
+from modules.control.proto import pad_msg_pb2
 from modules.localization.proto import localization_pb2
+from modules.planning.proto import planning_pb2
+from modules.prediction.proto import  prediction_obstacle_pb2
+import modules.tools.common.proto_utils as proto_utils
 
 
-class RtkRecord(object):
+## local package
+from Agent.zzz.dynamic_map import DynamicMap
+from Agent.zzz.frenet import Frenet_path
+from Agent.zzz.JunctionTrajectoryPlanner import JunctionTrajectoryPlanner
+from Agent.zzz.dynamic_map import Lane, Lanepoint, Vehicle
+from scipy.spatial.transform import Rotation as R
+from modules.routing.proto import routing_pb2
+# TODO(all): hard-coded path temporarily. Better approach needed.
+APOLLO_ROOT = "/apollo"
+
+class RtkPlayer(object):
     """
-    rtk recording class
+    rtk player class
     """
 
-    def write(self, data):
-        """Wrap file write function to flush data to disk"""
-        self.file_handler.write(data)
-        self.file_handler.flush()
-
-    def __init__(self, record_file):
+    def __init__(self, record_file, node):
+        """Init player."""
         self.firstvalid = False
-        self.logger = Logger.get_logger("RtkRecord")
-        self.record_file = record_file
-        self.logger.info("Record file to: " + record_file)
-
+        self.logger = Logger.get_logger(tag="RtkPlayer")
+        self.logger.info("Load record file from: %s" % record_file)
         try:
-            self.file_handler = open(record_file, 'w')
-        except IOError:
-            self.logger.error("Open file %s failed" % (record_file))
-            self.file_handler.close()
+            file_handler = open(record_file, 'r')
+        except (FileNotFoundError, IOError) as ex:
+            self.logger.error("Error opening {}: {}".format(record_file, ex))
             sys.exit(1)
 
-        self.write("x,y,z,speed,acceleration,curvature,"
-                   "curvature_change_rate,time,theta,gear,s,throttle,brake,steering\n")
-
+        self.data = genfromtxt(file_handler, delimiter=',', names=True)
+        file_handler.close()
+        self.starttime = cyber_time.Time.now().to_sec()
         self.localization = localization_pb2.LocalizationEstimate()
+        self.prediction = prediction_obstacle_pb2.PredictionObstacles()
         self.chassis = chassis_pb2.Chassis()
+        self.padmsg = pad_msg_pb2.PadMessage()
+        self.localization_received = False
         self.chassis_received = False
 
-        self.cars = 0.0
-        self.startmoving = False
+        self.planning_pub = node.create_writer('/apollo/planning',
+                                               planning_pb2.ADCTrajectory)
 
+        self.speedmultiplier = 1
         self.terminating = False
-        self.carcurvature = 0.0
+        self.sequence_num = 0
 
-        self.prev_carspeed = 0.0
+        b, a = signal.butter(6, 0.05, 'low')
+        self.data['acceleration'] = signal.filtfilt(b, a,
+                                                    self.data['acceleration'])
 
-        vehicle_config = vehicle_config_pb2.VehicleConfig()
-        proto_utils.get_pb_from_text_file(
-            "/apollo/modules/common/data/vehicle_param.pb.txt", vehicle_config)
-        self.vehicle_param = vehicle_config.vehicle_param
+        self.start = 0
+        self.end = 0
+        self.closestpoint = 0
+        self.logger.info("Planning Ready")
+
+        # init
+        self.carx = 0
+        self.cary = 0
+        self.yaw = 0
+        self.carvx = 0
+        self.carvy = 0
+        
+    def localization_callback(self, data):
+        """
+        New localization Received
+        """
+        self.localization.CopyFrom(data)
+        self.carx = self.localization.pose.position.x
+        self.cary = self.localization.pose.position.y
+        self.carz = self.localization.pose.position.z
+        self.carvx = self.localization.pose.linear_velocity.x
+        self.carvy = self.localization.pose.linear_velocity.y
+        
+        self.qx = self.localization.pose.orientation.qx
+        self.qy = self.localization.pose.orientation.qy
+        self.qz = self.localization.pose.orientation.qz
+        self.qw = self.localization.pose.orientation.qw
+       
+        self.localization_received = True
+        self.yaw =  self.xyzw2yaw()
+
+    def  xyzw2yaw(self,):
+        Rq=[self.qx, self.qy, self.qz, self.qw]
+        r = R.from_quat(Rq)
+        Rm = r.as_matrix()
+        euler0 = r.as_euler('xyz', degrees=True)
+        return euler0[2]
+
+    def prediction_callback(self, data):
+        self.prediction.CopyFrom(data)
+
+    def routing(self,data): # dns Fixme add routing
+        self.routing.CopyFrom(data)
 
     def chassis_callback(self, data):
         """
-        New message received
+        New chassis Received
         """
-        if self.terminating is True:
-            self.logger.info("terminating when receive chassis msg")
-            return
-
         self.chassis.CopyFrom(data)
-        #self.chassis = data
-        if math.isnan(self.chassis.speed_mps):
-            self.logger.warning("find nan speed_mps: %s" % str(self.chassis))
-        if math.isnan(self.chassis.steering_percentage):
-            self.logger.warning(
-                "find nan steering_percentage: %s" % str(self.chassis))
+        self.automode = (self.chassis.driving_mode
+                         == chassis_pb2.Chassis.COMPLETE_AUTO_DRIVE)
         self.chassis_received = True
 
-    def localization_callback(self, data):
+    def publish_planningmsg(self):
         """
-        New message received
+        Generate New Path
         """
-        if self.terminating is True:
-            self.logger.info("terminating when receive localization msg")
+        if not self.localization_received:
+            self.logger.warning(
+                "localization not received yet when publish_planningmsg")
             return
 
-        if not self.chassis_received:
-            self.logger.info(
-                "chassis not received when localization is received")
-            return
+        planningdata = planning_pb2.ADCTrajectory()
+        now = cyber_time.Time.now().to_sec()
+        planningdata.header.timestamp_sec = now
+        planningdata.header.module_name = "planning"
+        planningdata.header.sequence_num = self.sequence_num
+        self.sequence_num = self.sequence_num + 1
 
-        self.localization.CopyFrom(data)
-        #self.localization = data
-        carx = self.localization.pose.position.x
-        cary = self.localization.pose.position.y
-        carz = self.localization.pose.position.z
-        cartheta = self.localization.pose.heading
-        if math.isnan(self.chassis.speed_mps):
-            self.logger.warning("find nan speed_mps: %s" % str(self.chassis))
-            return
-        carspeed = self.chassis.speed_mps
-        caracceleration = self.localization.pose.linear_acceleration_vrf.y
+        self.start = 0
+        self.end = len(self.data) - 1
 
-        speed_epsilon = 1e-9
-        if abs(self.prev_carspeed) < speed_epsilon \
-                and abs(carspeed) < speed_epsilon:
-            caracceleration = 0.0
 
-        carsteer = 0
-        carmax_steer_angle = self.vehicle_param.max_steer_angle
-        carsteer_ratio = self.vehicle_param.steer_ratio
-        carwheel_base = self.vehicle_param.wheel_base
-        curvature = math.tan(math.radians(carsteer / 100
-                                          * math.degrees(carmax_steer_angle)) / carsteer_ratio) / carwheel_base
-        if abs(carspeed) >= speed_epsilon:
-            carcurvature_change_rate = (curvature - self.carcurvature) / (
-                carspeed * 0.01)
-        else:
-            carcurvature_change_rate = 0.0
-        self.carcurvature = curvature
-        cartime = self.localization.header.timestamp_sec
-        cargear = self.chassis.gear_location
+        planningdata.total_path_length = self.data['s'][self.end] - \
+            self.data['s'][self.start]
+        self.logger.info("total number of planning data point: %d" %
+                         (self.end - self.start))
+        planningdata.total_path_time = self.data['time'][self.end] - \
+            self.data['time'][self.start]
+        planningdata.gear = 1
+        planningdata.engage_advice.advice = \
+            drive_state_pb2.EngageAdvice.READY_TO_ENGAGE
 
-        if abs(carspeed) >= speed_epsilon:
-            if self.startmoving is False:
-                self.logger.info(
-                    "carspeed !=0 and startmoving is False, Start Recording")
-            self.startmoving = True
+        for i in range(self.start, self.end//100):
+            adc_point = pnc_point_pb2.TrajectoryPoint()
+            adc_point.path_point.x = self.data['x'][i]
+            adc_point.path_point.y = self.data['y'][i]
+            adc_point.path_point.z = self.data['z'][i]
+            adc_point.v = self.data['speed'][i] * self.speedmultiplier
+            adc_point.a = self.data['acceleration'][i] * self.speedmultiplier
+            adc_point.path_point.kappa = self.data['curvature'][i]
+            adc_point.path_point.dkappa = self.data['curvature_change_rate'][i]
+            adc_point.path_point.theta = self.data['theta'][i]
+            adc_point.path_point.s = self.data['s'][i]
 
-        if self.startmoving:
-            self.cars += carspeed * 0.01
-            self.write(
-                "%s, %s, %s, %s, %s, %s, %s, %.4f, %s, %s, %s, %s, %s, %s\n" %
-                (carx, cary, carz, carspeed, caracceleration, self.carcurvature,
-                 carcurvature_change_rate, cartime, cartheta, cargear,
-                 self.cars, self.chassis.throttle_percentage,
-                 self.chassis.brake_percentage,
-                 self.chassis.steering_percentage))
-            self.logger.debug(
-                "started moving and write data at time %s" % cartime)
-        else:
-            self.logger.debug("not start moving, do not write data to file")
 
-        self.prev_carspeed = carspeed
+            time_diff = self.data['time'][i] - \
+                self.data['time'][0]
+
+            adc_point.relative_time = time_diff  - (
+                now - self.starttime)
+
+            planningdata.trajectory_point.extend([adc_point])
+
+        planningdata.estop.is_estop = False
+
+        self.planning_pub.write(planningdata)
+        self.logger.debug("Generated Planning Sequence: "
+                          + str(self.sequence_num - 1))
+
+    def publish_planningmsg_trajectory(self, trajectory):
+                # print("trajectory.trajectory",trajectory.trajectory)
+                if not self.localization_received:
+                    self.logger.warning(
+                        "localization not received yet when publish_planningmsg")
+                    return
+
+                planningdata = planning_pb2.ADCTrajectory()
+                now = cyber_time.Time.now().to_sec()
+                planningdata.header.timestamp_sec = now
+                planningdata.header.module_name = "planning"
+                planningdata.header.sequence_num = self.sequence_num
+                self.sequence_num = self.sequence_num + 1
+
+
+                planningdata.total_path_length = self.data['s'][self.end] - \
+                    self.data['s'][self.start]
+                self.logger.info("total number of planning data point: %d" %
+                                (self.end - self.start))
+                planningdata.total_path_time = self.data['time'][self.end] - \
+                    self.data['time'][self.start]
+                planningdata.gear = 1
+                planningdata.engage_advice.advice = \
+                    drive_state_pb2.EngageAdvice.READY_TO_ENGAGE
+
+                for i in range(len(trajectory.trajectory)-1):
+                    adc_point = pnc_point_pb2.TrajectoryPoint()
+                    adc_point.path_point.x = trajectory.trajectory[i][0]
+                    adc_point.path_point.y = trajectory.trajectory[i][1]
+                    adc_point.path_point.z = 0
+                    adc_point.v =  trajectory.trajectory[i][3]
+                    adc_point.a =  trajectory.trajectory[i][5]
+                    adc_point.path_point.kappa = 0
+                    adc_point.path_point.dkappa =0
+                    adc_point.path_point.theta =  trajectory.trajectory[i][2]
+                    adc_point.path_point.s = trajectory.trajectory[i][4]
+
+
+                    time_diff = self.data['time'][i] - \
+                        self.data['time'][0]
+
+                    adc_point.relative_time = time_diff  - (
+                        now - self.starttime)
+
+                    planningdata.trajectory_point.extend([adc_point])
+
+                planningdata.estop.is_estop = False
+
+                self.planning_pub.write(planningdata)
+                self.logger.debug("Generated Planning Sequence: "
+                                + str(self.sequence_num - 1))
 
     def shutdown(self):
         """
-        shutdown node
+        shutdown cyber
         """
         self.terminating = True
         self.logger.info("Shutting Down...")
-        self.logger.info("File is written into %s" % self.record_file)
-        self.file_handler.close()
+        time.sleep(0.2)
+
+    def quit(self, signum, frame):
+        """
+        shutdown the keypress thread
+        """
+        sys.exit(0)
+
+    def get_obs(self):
+        obs =[ [self.carx, self.cary, self.carvx, self.carvy, 1.5],[0,0,0,0,0]] #FIXME: The angle should be modified
+        print("obs",obs)
+        return obs
+
+# Werling Planner Init
+class Werling_planner():
+    def  __init__(self,):
+        self.trajectory_planner = JunctionTrajectoryPlanner()
+        self.dynamic_map = DynamicMap()
+        self.read_ref_path_from_file()
+    
+    def update_path(self, obs, done):# TODO: represent a obs
+        if done or obs[0][0]==0:
+            self.trajectory_planner.clear_buff(clean_csp=False)
+        else:
+            self.dynamic_map.update_map_from_list_obs(obs)
+
+            candidate_trajectories_tuple = self.trajectory_planner.generate_candidate_trajectories(self.dynamic_map)
+            chosen_action_id = 3
+            chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
+
+            return chosen_trajectory
+    
+    def read_ref_path_from_file(self):
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
+        try:
+            file_handler = open(record_file, 'r')
+        except (FileNotFoundError, IOError) as ex:
+            self.logger.error("Error opening {}: {}".format(record_file, ex))
+            sys.exit(1)
+
+        self.data = genfromtxt(file_handler, delimiter=',', names=True)
+        file_handler.close()
+        t_array = []
+        self.ref_path = Lane()
+        for i in range(0,len(self.data)//100): # The Apollo record data is too dense!
+            lanepoint = Lanepoint()
+            lanepoint.position.x = self.data['x'][i*90]
+            lanepoint.position.y = self.data['y'][i*90]
+            # print("ref path", lanepoint.position.x, lanepoint.position.y)
+            self.ref_path.central_path.append(lanepoint)
+            t_array.append(lanepoint)
+        self.ref_path.central_path_array = np.array(t_array)
+        self.ref_path.speed_limit = 60/3.6 # m/s
+        self.dynamic_map.update_ref_path_from_routing(self.ref_path) 
 
 
-def main(argv):
+
+def main():
     """
-    Main node
+    Main cyber
     """
-    node = cyber.Node("rtk_recorder")
-    argv = FLAGS(argv)
 
-    log_dir = "/apollo/data/log"
-    if len(argv) > 1:
-        log_dir = argv[1]
-
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    node = cyber.Node("rtk_player")
 
     Logger.config(
-        log_file=log_dir + "rtk_recorder.log",
+        log_file=os.path.join(APOLLO_ROOT, 'data/log/rtk_player.log'),
         use_stdout=True,
         log_level=logging.DEBUG)
-    print("runtime log is in %s%s" % (log_dir, "rtk_recorder.log"))
 
-    record_file = log_dir + "/garage.csv"
-    recorder = RtkRecord(record_file)
-    atexit.register(recorder.shutdown)
-    node.create_reader('/apollo/canbus/chassis',
-                       chassis_pb2.Chassis,
-                       recorder.chassis_callback)
+    record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
+
+    player = RtkPlayer(record_file, node)
+    
+    planner = Werling_planner()
+
+    atexit.register(player.shutdown)
+
+    node.create_reader('/apollo/canbus/chassis', chassis_pb2.Chassis,
+                       player.chassis_callback)
 
     node.create_reader('/apollo/localization/pose',
                        localization_pb2.LocalizationEstimate,
-                       recorder.localization_callback)
+                       player.localization_callback)
+    node.create_reader('/apollo/prediction', 
+                        prediction_obstacle_pb2.PredictionObstacles,
+                        player.prediction_callback)
+    node.create_reader('/apollo/routing', 
+                        routing_pb2.RoutingResponse,
+                        player.routing_callback)
+
+
 
     while not cyber.is_shutdown():
-        time.sleep(0.002)
+        now = cyber_time.Time.now().to_sec()
+
+        # New add
+        obs =  player.get_obs()
+        trajectory = planner.update_path(obs, done=0)
+        if trajectory is not None:
+            player.publish_planningmsg_trajectory(trajectory)
+        
+        
+        # player.publish_planningmsg()
+        sleep_time = 0.1 - (cyber_time.Time.now().to_sec() - now)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
 
 if __name__ == '__main__':
     cyber.init()
-    main(sys.argv)
+    main()
     cyber.shutdown()
