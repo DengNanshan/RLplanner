@@ -51,6 +51,7 @@ from Agent.zzz.frenet import Frenet_path
 from Agent.zzz.JunctionTrajectoryPlanner import JunctionTrajectoryPlanner
 from Agent.zzz.dynamic_map import Lane, Lanepoint, Vehicle
 from scipy.spatial.transform import Rotation as R
+from modules.routing.proto import routing_pb2
 # TODO(all): hard-coded path temporarily. Better approach needed.
 APOLLO_ROOT = "/apollo"
 
@@ -171,7 +172,7 @@ class RtkPlayer(object):
         planningdata.engage_advice.advice = \
             drive_state_pb2.EngageAdvice.READY_TO_ENGAGE
 
-        for i in range(self.start, self.end//100):
+        for i in range(self.start, self.end):
             adc_point = pnc_point_pb2.TrajectoryPoint()
             adc_point.path_point.x = self.data['x'][i]
             adc_point.path_point.y = self.data['y'][i]
@@ -300,6 +301,9 @@ class Werling_planner():
         file_handler.close()
         t_array = []
         self.ref_path = Lane()
+
+
+
         for i in range(0,len(self.data)//100): # The Apollo record data is too dense!
             lanepoint = Lanepoint()
             lanepoint.position.x = self.data['x'][i*90]
@@ -339,21 +343,25 @@ def main():
     node.create_reader('/apollo/localization/pose',
                        localization_pb2.LocalizationEstimate,
                        player.localization_callback)
+    
     node.create_reader('/apollo/prediction', 
                         prediction_obstacle_pb2.PredictionObstacles,
                         player.prediction_callback)
+    
+    node.create_reader()
+
 
     while not cyber.is_shutdown():
         now = cyber_time.Time.now().to_sec()
 
         # New add
-        obs =  player.get_obs()
-        trajectory = planner.update_path(obs, done=0)
-        if trajectory is not None:
-            player.publish_planningmsg_trajectory(trajectory)
+        # obs =  player.get_obs()
+        # trajectory = planner.update_path(obs, done=0)
+        # if trajectory is not None:
+        #     player.publish_planningmsg_trajectory(trajectory)
         
         
-        # player.publish_planningmsg()
+        player.publish_planningmsg()
         sleep_time = 0.1 - (cyber_time.Time.now().to_sec() - now)
         if sleep_time > 0:
             time.sleep(sleep_time)
