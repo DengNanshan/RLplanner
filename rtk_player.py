@@ -132,10 +132,11 @@ class RtkPlayer(object):
 
     def prediction_callback(self, data):
         self.prediction.CopyFrom(data)
-    
-    def routing_callback(self, data)
+        self.logger.info(self.prediction)
+    def routing_callback(self, data):
         self.routing.CopyFrom(data)
-
+        print(self.rounting)
+        self.logger.info(self.rounting)
     def chassis_callback(self, data):
         """
         New chassis Received
@@ -167,8 +168,8 @@ class RtkPlayer(object):
 
         planningdata.total_path_length = self.data['s'][self.end] - \
             self.data['s'][self.start]
-        self.logger.info("total number of planning data point: %d" %
-                         (self.end - self.start))
+        # self.logger.info("total number of planning data point: %d" %
+        #                  (self.end - self.start))
         planningdata.total_path_time = self.data['time'][self.end] - \
             self.data['time'][self.start]
         planningdata.gear = 1
@@ -199,8 +200,8 @@ class RtkPlayer(object):
         planningdata.estop.is_estop = False
 
         self.planning_pub.write(planningdata)
-        self.logger.debug("Generated Planning Sequence: "
-                          + str(self.sequence_num - 1))
+        # self.logger.debug("Generated Planning Sequence: "
+        #                   + str(self.sequence_num - 1))
 
     def publish_planningmsg_trajectory(self, trajectory):
                 # print("trajectory.trajectory",trajectory.trajectory)
@@ -351,7 +352,7 @@ def main():
                         prediction_obstacle_pb2.PredictionObstacles,
                         player.prediction_callback)
     
-    node.create_reader('/apollo/rounting',
+    node.create_reader('/apollo/rounting_response_history',
                         routing_pb2.RoutingResponse,
                         player.routing_callback)
 
