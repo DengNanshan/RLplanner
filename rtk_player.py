@@ -132,6 +132,9 @@ class RtkPlayer(object):
 
     def prediction_callback(self, data):
         self.prediction.CopyFrom(data)
+    
+    def routing_callback(self, data)
+        self.routing.CopyFrom(data)
 
     def chassis_callback(self, data):
         """
@@ -348,8 +351,9 @@ def main():
                         prediction_obstacle_pb2.PredictionObstacles,
                         player.prediction_callback)
     
-    node.create_reader()
-
+    node.create_reader('/apollo/rounting',
+                        routing_pb2.RoutingResponse,
+                        player.routing_callback)
 
     while not cyber.is_shutdown():
         now = cyber_time.Time.now().to_sec()
