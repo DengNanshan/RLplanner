@@ -13,19 +13,19 @@ from Agent.zzz.tools import *
 MAX_SPEED = 50.0 / 3.6  # maximum speed [m/s]
 MAX_ACCEL = 10.0  # maximum acceleration [m/ss]
 MAX_CURVATURE = 500.0  # maximum curvature [1/m]
-MAX_ROAD_WIDTH = 5.0   # maximum road width [m] # related to RL action space
-D_ROAD_W = 2.99  # road width sampling length [m]
+MAX_ROAD_WIDTH = 4.0   # maximum road width [m] # related to RL action space
+D_ROAD_W = 0.5  # road width sampling length [m]
 DT = 0.1  # time tick [s]
-MAXT = 4.1  # max prediction time [m]
-MINT = 4.0  # min prediction time [m]
-TARGET_SPEED = 30.0 / 3.6  # target speed [m/s]
-D_T_S = 20.0 / 3.6  # target speed sampling length [m/s]
+MAXT = 10.1  # max prediction time [m]
+MINT = 10.0  # min prediction time [m]
+TARGET_SPEED = 10.0 / 3.6  # target speed [m/s]
+D_T_S = 5.0 / 3.6  # target speed sampling length [m/s]
 N_S_SAMPLE = 1  # sampling number of target speed
 
 # Collision check
-OBSTACLES_CONSIDERED = 4
-ROBOT_RADIUS = 2.5  # robot radius [m]
-RADIUS_SPEED_RATIO = 1 # higher speed, bigger circle
+OBSTACLES_CONSIDERED = 100
+ROBOT_RADIUS = 3.0  # robot radius [m]
+RADIUS_SPEED_RATIO = 0 # higher speed, bigger circle
 MOVE_GAP = 1.5
 ONLY_SAMPLE_TO_LEFT = True
 
@@ -135,25 +135,51 @@ class JunctionTrajectoryPlanner_SP(object):
         else:
             return None
 
-    def trajectory_update_CP(self, CP_action, update=True):
-        if CP_action == 0:
+    def trajectory_update_CP(self, DCP_action, update=True):
+        # if CP_action == 0:
+        #     # print("[CP]:----> Brake") 
+        #     generated_trajectory =  self.all_trajectory[0][0]
+        #     trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y]
+        #     trajectory_action = TrajectoryAction(trajectory_array, [0] * len(trajectory_array))
+        #     return trajectory_action          
+            
+        # fplist = self.all_trajectory  
+        # bestpath = fplist[int(CP_action - 1)][0]
+        # bestpath.s_d
+        # trajectory_array = np.c_[bestpath.x, bestpath.y]
+        
+        # # next time when you calculate start state
+        # if update==True:
+        #     self.last_trajectory_array_rule = trajectory_array
+        #     self.last_trajectory_rule = bestpath 
+
+        # trajectory_action = TrajectoryAction(trajectory_array, bestpath.s_d[:len(trajectory_array)])
+        # # print("[CP]: ------> CP Successful Planning")           
+        # return trajectory_action
+        if DCP_action == 0:
             # print("[CP]:----> Brake") 
             generated_trajectory =  self.all_trajectory[0][0]
-            trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y]
-            trajectory_action = TrajectoryAction(trajectory_array, [0] * len(trajectory_array))
+            trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y, 
+                                                                generated_trajectory.yaw, generated_trajectory.s_d,
+                                                                generated_trajectory.s, generated_trajectory.s_dd ]
+            trajectory_action = TrajectoryAction(trajectory_array, [0] * len(trajectory_array), generated_trajectory)
+            trajectory_action.original_trajectory.cf = 500
+            trajectory_action.original_trajectory.s_d = [0] * len(trajectory_array)
             return trajectory_action          
             
-        fplist = self.all_trajectory  
-        bestpath = fplist[int(CP_action - 1)][0]
-        bestpath.s_d
-        trajectory_array = np.c_[bestpath.x, bestpath.y]
+        bestpath = self.all_trajectory[int(DCP_action - 1)][0]
+        # bestpath.s_d
+        print("bestpath.yaw",bestpath.yaw)
+        trajectory_array = np.c_[bestpath.x, bestpath.y, 
+                                                            bestpath.yaw, bestpath.s_d,
+                                                             bestpath.s, bestpath.s_dd ]
         
         # next time when you calculate start state
         if update==True:
             self.last_trajectory_array_rule = trajectory_array
             self.last_trajectory_rule = bestpath 
 
-        trajectory_action = TrajectoryAction(trajectory_array, bestpath.s_d[:len(trajectory_array)])
+        trajectory_action = TrajectoryAction(trajectory_array, bestpath.s_d[:len(trajectory_array)], bestpath)
         # print("[CP]: ------> CP Successful Planning")           
         return trajectory_action
 
@@ -238,7 +264,7 @@ class JunctionTrajectoryPlanner_SP(object):
             start_state.c_d_d = ffstate.vd # current lateral speed [m/s]
             start_state.c_d_dd = 0   # current latral acceleration [m/s]
 
-            
+        # print("start_state",ffstate.psi)
         return start_state
 
     def frenet_optimal_planning(self, csp, c_speed, start_state):
@@ -304,7 +330,7 @@ class JunctionTrajectoryPlanner_SP(object):
             left_sample_bound = D_ROAD_W
         else:
             left_sample_bound = MAX_ROAD_WIDTH 
-        for di in np.arange(-MAX_ROAD_WIDTH, left_sample_bound, D_ROAD_W):
+        for di in np.arange(-left_sample_bound, MAX_ROAD_WIDTH, D_ROAD_W):
 
             # Lateral motion planning
             for Ti in np.arange(MINT, MAXT, DT):

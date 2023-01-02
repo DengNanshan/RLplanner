@@ -296,6 +296,7 @@ class RtkPlayer(object):
         obs = []
         if self.obss is not None:
             ego_obs =[self.carx, self.cary, self.carvx, self.carvy, self.yaw] #FIXME: The angle should be modified
+            # print("ego_yaw",self.carx, self.cary, self.yaw)
             obs.append(ego_obs)
 
             for i in range(len(self.obss)):
@@ -311,7 +312,7 @@ class RtkPlayer(object):
 
 class Werling_planner_SP():
     def  __init__(self,):
-        self.trajectory_planner = JunctionTrajectoryPlanner()
+        self.trajectory_planner = JunctionTrajectoryPlanner_SP()
         self.dynamic_map = DynamicMap()
         self.read_ref_path_from_file()
     
@@ -344,10 +345,10 @@ class Werling_planner_SP():
 
 
 
-        for i in range(0,len(self.data)//100): # The Apollo record data is too dense!
+        for i in range(0,len(self.data)//200): # The Apollo record data is too dense!
             lanepoint = Lanepoint()
-            lanepoint.position.x = self.data['x'][i*90]
-            lanepoint.position.y = self.data['y'][i*90]
+            lanepoint.position.x = self.data['x'][i*190]
+            lanepoint.position.y = self.data['y'][i*190]
             # print("ref path", lanepoint.position.x, lanepoint.position.y)
             self.ref_path.central_path.append(lanepoint)
             t_array.append(lanepoint)
@@ -370,7 +371,7 @@ class Werling_planner():
 
             candidate_trajectories_tuple = self.trajectory_planner.generate_candidate_trajectories(self.dynamic_map)
 
-            chosen_action_id = 3
+            chosen_action_id = 2
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
 
             return chosen_trajectory
@@ -419,7 +420,7 @@ def main():
 
     player = RtkPlayer(record_file, node)
     
-    planner = Werling_planner()
+    planner = Werling_planner_SP()
 
     atexit.register(player.shutdown)
 
@@ -445,11 +446,11 @@ def main():
         # New add
         obs =  player.get_obs()
         trajectory = planner.update_path(obs, done=0)
-        # if trajectory is not None:
-        #     player.publish_planningmsg_trajectory(trajectory)
+        if trajectory is not None:
+            player.publish_planningmsg_trajectory(trajectory)
         
         
-        player.publish_planningmsg()
+        # player.publish_planningmsg()
         sleep_time = 0.1 - (cyber_time.Time.now().to_sec() - now)
         if sleep_time > 0:
             time.sleep(sleep_time)
