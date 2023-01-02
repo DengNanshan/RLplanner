@@ -160,6 +160,9 @@ class RtkPlayer(object):
         # print(self.rounting)
         # self.logger.info(self.rounting)
 
+
+
+
     def chassis_callback(self, data):
         """
         New chassis Received
