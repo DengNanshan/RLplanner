@@ -290,7 +290,7 @@ class JunctionTrajectoryPlanner(object):
         candidate_len3 = len(sorted_fplist)
 
         for fp, score, index in sorted_fplist:
-            return fp, index + 1 # 0 for brake trajectory
+             return fp, index + 1 # 0 for brake trajectory
         
         return None,0
 

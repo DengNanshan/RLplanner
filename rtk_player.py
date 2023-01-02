@@ -49,9 +49,12 @@ import modules.tools.common.proto_utils as proto_utils
 from Agent.zzz.dynamic_map import DynamicMap
 from Agent.zzz.frenet import Frenet_path
 from Agent.zzz.JunctionTrajectoryPlanner import JunctionTrajectoryPlanner
+from Agent.zzz.JunctionTrajectoryPlanner_simple_predict import JunctionTrajectoryPlanner_SP
+
 from Agent.zzz.dynamic_map import Lane, Lanepoint, Vehicle
 from scipy.spatial.transform import Rotation as R
 from modules.routing.proto import routing_pb2
+from modules.perception.proto import perception_obstacle_pb2
 # TODO(all): hard-coded path temporarily. Better approach needed.
 APOLLO_ROOT = "/apollo"
 
@@ -76,6 +79,7 @@ class RtkPlayer(object):
         self.starttime = cyber_time.Time.now().to_sec()
         self.localization = localization_pb2.LocalizationEstimate()
         self.prediction = prediction_obstacle_pb2.PredictionObstacles()
+        self.perception = perception_obstacle_pb2.PerceptionObstacles()
         self.chassis = chassis_pb2.Chassis()
         self.padmsg = pad_msg_pb2.PadMessage()
         self.localization_received = False
@@ -103,6 +107,7 @@ class RtkPlayer(object):
         self.yaw = 0
         self.carvx = 0
         self.carvy = 0
+        self.obss = None
         
     def localization_callback(self, data):
         """
@@ -115,13 +120,14 @@ class RtkPlayer(object):
         self.carvx = self.localization.pose.linear_velocity.x
         self.carvy = self.localization.pose.linear_velocity.y
         
-        self.qx = self.localization.pose.orientation.qx
-        self.qy = self.localization.pose.orientation.qy
-        self.qz = self.localization.pose.orientation.qz
-        self.qw = self.localization.pose.orientation.qw
+        # self.qx = self.localization.pose.orientation.qx
+        # self.qy = self.localization.pose.orientation.qy
+        # self.qz = self.localization.pose.orientation.qz
+        # self.qw = self.localization.pose.orientation.qw
        
         self.localization_received = True
-        self.yaw =  self.xyzw2yaw()
+        # self.yaw =  self.xyzw2yaw()
+        self.yaw = self.localization.pose.heading
 
     def  xyzw2yaw(self,):
         Rq=[self.qx, self.qy, self.qz, self.qw]
@@ -132,11 +138,28 @@ class RtkPlayer(object):
 
     def prediction_callback(self, data):
         self.prediction.CopyFrom(data)
-        self.logger.info(self.prediction)
+        # self.logger.info(self.prediction)
+
+    def perception_callback(self, data):
+        self.perception.CopyFrom(data)
+        self.obss = self.perception.perception_obstacle    #list
+        # print("DNSdebug+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+        # self.logger.info(self.obss)
+
+        # message PerceptionObstacles {
+        # repeated PerceptionObstacle perception_obstacle = 1;  // An array of obstacles
+        # optional apollo.common.Header header = 2;             // Header
+        # optional apollo.common.ErrorCode error_code = 3 [default = OK];
+        # optional LaneMarkers lane_marker = 4;
+        # optional CIPVInfo cipv_info = 5;  // Closest In Path Vehicle (CIPV)
+        # }
+
+
     def routing_callback(self, data):
         self.routing.CopyFrom(data)
-        print(self.rounting)
-        self.logger.info(self.rounting)
+        # print(self.rounting)
+        # self.logger.info(self.rounting)
+
     def chassis_callback(self, data):
         """
         New chassis Received
@@ -264,17 +287,74 @@ class RtkPlayer(object):
         time.sleep(0.2)
 
     def quit(self, signum, frame):
-        """
+        """surrouding_obs
         shutdown the keypress thread
         """
         sys.exit(0)
 
     def get_obs(self):
-        obs =[ [self.carx, self.cary, self.carvx, self.carvy, 1.5],[0,0,0,0,0]] #FIXME: The angle should be modified
-        print("obs",obs)
+        obs = []
+        if self.obss is not None:
+            ego_obs =[self.carx, self.cary, self.carvx, self.carvy, self.yaw] #FIXME: The angle should be modified
+            obs.append(ego_obs)
+
+            for i in range(len(self.obss)):
+                obs_info = self.obss[i]
+                surrouding_obs = [obs_info.position.x,
+                                                    obs_info.position.y,
+                                                    obs_info.velocity.x,
+                                                    obs_info.velocity.y,
+                                                    obs_info.theta]
+                obs.append(surrouding_obs)
+
         return obs
 
-# Werling Planner Init
+class Werling_planner_SP():
+    def  __init__(self,):
+        self.trajectory_planner = JunctionTrajectoryPlanner()
+        self.dynamic_map = DynamicMap()
+        self.read_ref_path_from_file()
+    
+    def update_path(self, obs, done):# TODO: represent a obs
+        if done or len(obs)<1:
+            self.trajectory_planner.clear_buff(clean_csp=False)
+        else:
+            self.dynamic_map.update_map_from_list_obs(obs)
+
+
+            trajectory_action, index = self.trajectory_planner.trajectory_update(self.dynamic_map)
+
+            chosen_action_id = index
+            chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
+
+            return chosen_trajectory
+    
+    def read_ref_path_from_file(self):
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
+        try:
+            file_handler = open(record_file, 'r')
+        except (FileNotFoundError, IOError) as ex:
+            self.logger.error("Error opening {}: {}".format(record_file, ex))
+            sys.exit(1)
+
+        self.data = genfromtxt(file_handler, delimiter=',', names=True)
+        file_handler.close()
+        t_array = []
+        self.ref_path = Lane()
+
+
+
+        for i in range(0,len(self.data)//100): # The Apollo record data is too dense!
+            lanepoint = Lanepoint()
+            lanepoint.position.x = self.data['x'][i*90]
+            lanepoint.position.y = self.data['y'][i*90]
+            # print("ref path", lanepoint.position.x, lanepoint.position.y)
+            self.ref_path.central_path.append(lanepoint)
+            t_array.append(lanepoint)
+        self.ref_path.central_path_array = np.array(t_array)
+        self.ref_path.speed_limit = 60/3.6 # m/s
+        self.dynamic_map.update_ref_path_from_routing(self.ref_path) 
+
 class Werling_planner():
     def  __init__(self,):
         self.trajectory_planner = JunctionTrajectoryPlanner()
@@ -282,12 +362,14 @@ class Werling_planner():
         self.read_ref_path_from_file()
     
     def update_path(self, obs, done):# TODO: represent a obs
-        if done or obs[0][0]==0:
+        if done or len(obs)<1:
             self.trajectory_planner.clear_buff(clean_csp=False)
         else:
             self.dynamic_map.update_map_from_list_obs(obs)
 
+
             candidate_trajectories_tuple = self.trajectory_planner.generate_candidate_trajectories(self.dynamic_map)
+
             chosen_action_id = 3
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
 
@@ -352,16 +434,17 @@ def main():
                         prediction_obstacle_pb2.PredictionObstacles,
                         player.prediction_callback)
     
-    node.create_reader('/apollo/rounting_response_history',
-                        routing_pb2.RoutingResponse,
-                        player.routing_callback)
+    
+    node.create_reader('/apollo/perception/obstacles',
+                        perception_obstacle_pb2.PerceptionObstacles,
+                        player.perception_callback)
 
     while not cyber.is_shutdown():
         now = cyber_time.Time.now().to_sec()
 
         # New add
-        # obs =  player.get_obs()
-        # trajectory = planner.update_path(obs, done=0)
+        obs =  player.get_obs()
+        trajectory = planner.update_path(obs, done=0)
         # if trajectory is not None:
         #     player.publish_planningmsg_trajectory(trajectory)
         

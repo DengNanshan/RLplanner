@@ -38,7 +38,7 @@ KLON = 1.0
 KRLS = 1.0
 
 
-class JunctionTrajectoryPlanner(object):
+class JunctionTrajectoryPlanner_SP(object):
 
     def __init__(self, target_line = 0):
         self.last_trajectory_array = np.c_[0, 0]
