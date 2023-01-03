@@ -1,5 +1,6 @@
 
 *.pyc
+testing/
 # Agent/drl_library/zzz/
 # # Bazel
 # bazel-*
