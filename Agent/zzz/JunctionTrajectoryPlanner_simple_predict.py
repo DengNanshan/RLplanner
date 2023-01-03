@@ -169,7 +169,7 @@ class JunctionTrajectoryPlanner_SP(object):
             
         bestpath = self.all_trajectory[int(DCP_action - 1)][0]
         # bestpath.s_d
-        print("bestpath.yaw",bestpath.yaw)
+        # print("bestpath.yaw",bestpath.yaw)
         trajectory_array = np.c_[bestpath.x, bestpath.y, 
                                                             bestpath.yaw, bestpath.s_d,
                                                              bestpath.s, bestpath.s_dd ]

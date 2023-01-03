@@ -55,6 +55,7 @@ from Agent.zzz.dynamic_map import Lane, Lanepoint, Vehicle
 from scipy.spatial.transform import Rotation as R
 from modules.routing.proto import routing_pb2
 from modules.perception.proto import perception_obstacle_pb2
+from matplotlib import pyplot as plt
 # TODO(all): hard-coded path temporarily. Better approach needed.
 APOLLO_ROOT = "/apollo"
 
@@ -113,6 +114,7 @@ class RtkPlayer(object):
         """
         New localization Received
         """
+
         self.localization.CopyFrom(data)
         self.carx = self.localization.pose.position.x
         self.cary = self.localization.pose.position.y
@@ -129,12 +131,7 @@ class RtkPlayer(object):
         # self.yaw =  self.xyzw2yaw()
         self.yaw = self.localization.pose.heading
 
-    def  xyzw2yaw(self,):
-        Rq=[self.qx, self.qy, self.qz, self.qw]
-        r = R.from_quat(Rq)
-        Rm = r.as_matrix()
-        euler0 = r.as_euler('xyz', degrees=True)
-        return euler0[2]
+
 
     def prediction_callback(self, data):
         self.prediction.CopyFrom(data)
@@ -224,7 +221,11 @@ class RtkPlayer(object):
             planningdata.trajectory_point.extend([adc_point])
 
         planningdata.estop.is_estop = False
-
+        #########plot debug"
+        # print(planningdata.trajectory_point.path_point)
+        # plt.plot(planningdata.trajectory_point.path_point.x,planningdata.trajectory_point.path_point.y)
+        plt.savefig("./plot rout")
+        print("save fig")
         self.planning_pub.write(planningdata)
         # self.logger.debug("Generated Planning Sequence: "
         #                   + str(self.sequence_num - 1))
@@ -297,10 +298,12 @@ class RtkPlayer(object):
 
     def get_obs(self):
         obs = []
-        if self.obss is not None:
-            ego_obs =[self.carx, self.cary, self.carvx, self.carvy, self.yaw] #FIXME: The angle should be modified
-            # print("ego_yaw",self.carx, self.cary, self.yaw)
-            obs.append(ego_obs)
+        ego_obs =[self.carx, self.cary, self.carvx, self.carvy, self.yaw] #FIXME: The angle should be modified
+        # print("ego_yaw",self.carx, self.cary, self.yaw)
+        obs.append(ego_obs)
+
+        if self.obss is not None:  # debug  empty
+
 
             for i in range(len(self.obss)):
                 obs_info = self.obss[i]
@@ -310,7 +313,6 @@ class RtkPlayer(object):
                                                     obs_info.velocity.y,
                                                     obs_info.theta]
                 obs.append(surrouding_obs)
-
         return obs
 
 class Werling_planner_SP():
@@ -445,7 +447,6 @@ def main():
 
     while not cyber.is_shutdown():
         now = cyber_time.Time.now().to_sec()
-
         # New add
         # obs =  player.get_obs()
         # trajectory = planner.update_path(obs, done=0)
@@ -462,4 +463,9 @@ def main():
 if __name__ == '__main__':
     cyber.init()
     main()
+
+
+    "plot"
+    plt.plot(adc_point.path_point.x,adc_point.path_point.y)
+
     cyber.shutdown()
