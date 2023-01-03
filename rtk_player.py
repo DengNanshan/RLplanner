@@ -447,13 +447,13 @@ def main():
         now = cyber_time.Time.now().to_sec()
 
         # New add
-        obs =  player.get_obs()
-        trajectory = planner.update_path(obs, done=0)
-        if trajectory is not None:
-            player.publish_planningmsg_trajectory(trajectory)
+        # obs =  player.get_obs()
+        # trajectory = planner.update_path(obs, done=0)
+        # if trajectory is not None:
+        #     player.publish_planningmsg_trajectory(trajectory)
         
         
-        # player.publish_planningmsg()
+        player.publish_planningmsg()
         sleep_time = 0.1 - (cyber_time.Time.now().to_sec() - now)
         if sleep_time > 0:
             time.sleep(sleep_time)
