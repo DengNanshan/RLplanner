@@ -51,7 +51,7 @@ from Agent.zzz.dynamic_map import DynamicMap
 from Agent.zzz.frenet import Frenet_path
 from Agent.zzz.JunctionTrajectoryPlanner import JunctionTrajectoryPlanner
 from Agent.zzz.JunctionTrajectoryPlanner_simple_predict import JunctionTrajectoryPlanner_SP
-
+from Agent.zzz.JunctionTrajectoryPlanner_simple_predict_dns import JunctionTrajectoryPlanner_SP_Dns
 from Agent.zzz.dynamic_map import Lane, Lanepoint, Vehicle
 from scipy.spatial.transform import Rotation as R
 from modules.routing.proto import routing_pb2
@@ -119,48 +119,28 @@ class RtkPlayer(object):
         """
         New localization Received
         """
-
+        print("localization in")
         self.localization.CopyFrom(data)
         self.carx = self.localization.pose.position.x
         self.cary = self.localization.pose.position.y
         self.carz = self.localization.pose.position.z
         self.carvx = self.localization.pose.linear_velocity.x
         self.carvy = self.localization.pose.linear_velocity.y
-        
-        # self.qx = self.localization.pose.orientation.qx
-        # self.qy = self.localization.pose.orientation.qy
-        # self.qz = self.localization.pose.orientation.qz
-        # self.qw = self.localization.pose.orientation.qw
-       
         self.localization_received = True
-        # self.yaw =  self.xyzw2yaw()
         self.yaw = self.localization.pose.heading
 
 
 
     def prediction_callback(self, data):
         self.prediction.CopyFrom(data)
-        # self.logger.info(self.prediction)
 
     def perception_callback(self, data):
         self.perception.CopyFrom(data)
         self.obss = self.perception.perception_obstacle    #list
-        # self.logger.info(self.obss)
-
-        # message PerceptionObstacles {
-        # repeated PerceptionObstacle perception_obstacle = 1;  // An array of obstacles
-        # optional apollo.common.Header header = 2;             // Header
-        # optional apollo.common.ErrorCode error_code = 3 [default = OK];
-        # optional LaneMarkers lane_marker = 4;
-        # optional CIPVInfo cipv_info = 5;  // Closest In Path Vehicle (CIPV)
-        # }
 
 
     def routing_callback(self, data):
         self.routing.CopyFrom(data)
-        # print(self.rounting)
-        # self.logger.info(self.rounting)
-
 
 
 
@@ -203,6 +183,9 @@ class RtkPlayer(object):
         planningdata.engage_advice.advice = \
             drive_state_pb2.EngageAdvice.READY_TO_ENGAGE
 
+        # add dreamview path
+        dns_path =  pnc_point_pb2.Path()
+        dns_path.name= "dns test path"
         for i in range(self.start, self.end):
             adc_point = pnc_point_pb2.TrajectoryPoint()
             adc_point.path_point.x = self.data['x'][i]
@@ -214,41 +197,28 @@ class RtkPlayer(object):
             adc_point.path_point.dkappa = self.data['curvature_change_rate'][i]
             adc_point.path_point.theta = self.data['theta'][i]
             adc_point.path_point.s = self.data['s'][i]
-
-
             time_diff = self.data['time'][i] - \
                 self.data['time'][0]
-
             adc_point.relative_time = time_diff  - (
                 now - self.starttime)
-
             planningdata.trajectory_point.extend([adc_point])
 
+
+            # path 
+            path_point = pnc_point_pb2.PathPoint()
+            path_point.x = self.data['x'][i]+3
+            path_point.y = self.data['y'][i]+1
+            path_point.z = self.data['z'][i]+4
+
+            path_point.kappa = self.data['curvature'][i]
+            path_point.dkappa = self.data['curvature_change_rate'][i]
+            path_point.theta = self.data['theta'][i]
+            path_point.s = self.data['s'][i]
+            dns_path.path_point.extend([path_point])
+            planningdata.debug.planning_data.path.extend([dns_path])
         planningdata.estop.is_estop = False
 
         
-        #########plot debug"
-        # print(planningdata.trajectory_point.path_point)
-        # plt.plot(planningdata.trajectory_point.path_point.x,planningdata.trajectory_point.path_point.y)
-        # plt.savefig("./plot rout")
-        # print("save fig")
-        """
-        dns test plot debug begin
-        """
-        # temp_chart = chart_pb2.Chart()
-        # temp_car = chart_pb2.Car()
-        # # temp_car.label("1")
-        # temp_car.x = 100
-        # temp_car.y = 1
-        # temp_car.heading = 0
-        # temp_chart.title="dns chart test"
-        # temp_chart.car.extend( [temp_car])
-        # planningdata.debug.planning_data.chart.extend([temp_chart])
-        
-        # add path
-        temp_path =  pnc_point_pb2.Path()
-        temp_path.name= "dns test path"
-        planningdata.debug.planning_data.path.extend([temp_path])
         """
         dns test plot debug end 
         """
@@ -309,11 +279,7 @@ class RtkPlayer(object):
             planningdata.trajectory_point.extend([adc_point])
 
         planningdata.estop.is_estop = False
-        #########plot debug"
-        # print(planningdata.trajectory_point.path_point)
-        # plt.plot(planningdata.trajectory_point.path_point.x,planningdata.trajectory_point.path_point.y)
-        # plt.savefig("./plot rout")
-        # print("save fig")
+
         self.planning_pub.write(planningdata)
         # self.logger.debug("Generated Planning Sequence: "
         #                   + str(self.sequence_num - 1))
@@ -321,7 +287,6 @@ class RtkPlayer(object):
     
 
     def publish_planningmsg_trajectory(self, trajectory):
-                # print("trajectory.trajectory",trajectory.trajectory)
                 if not self.localization_received:
                     self.logger.warning(
                         "localization not received yet when publish_planningmsg")
@@ -361,10 +326,10 @@ class RtkPlayer(object):
                     # time_diff = self.data['time'][i] - \
                     #     self.data['time'][0]
 
+
                     time_diff = 0.1*i
-
-                    adc_point.relative_time = time_diff  - now
-
+        
+                    adc_point.relative_time = time_diff  -  (now - self.starttime)
                     planningdata.trajectory_point.extend([adc_point])
 
                 planningdata.estop.is_estop = False
@@ -407,67 +372,24 @@ class RtkPlayer(object):
 
 class Werling_planner_SP():
     def  __init__(self,):
-        self.trajectory_planner = JunctionTrajectoryPlanner_SP()
+        self.trajectory_planner = JunctionTrajectoryPlanner_SP_Dns()
         self.dynamic_map = DynamicMap()
         self.read_ref_path_from_file()
     
     def update_path(self, obs, done):# TODO: represent a obs
         if done or len(obs)<1:
+            print("Without Obs")
             self.trajectory_planner.clear_buff(clean_csp=False)
         else:
+            
             self.dynamic_map.update_map_from_list_obs(obs)
 
             trajectory_action, index = self.trajectory_planner.trajectory_update(self.dynamic_map)
-
             chosen_action_id = index
+
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
+
             # print("chosen_",chosen_trajectory.trajectory)
-            return chosen_trajectory
-    
-    def read_ref_path_from_file(self):
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
-        try:
-            file_handler = open(record_file, 'r')
-        except (FileNotFoundError, IOError) as ex:
-            self.logger.error("Error opening {}: {}".format(record_file, ex))
-            sys.exit(1)
-
-        self.data = genfromtxt(file_handler, delimiter=',', names=True)
-        file_handler.close()
-        t_array = []
-        self.ref_path = Lane()
-
-
-
-        for i in range(0,len(self.data)//100): # The Apollo record data is too dense!
-            lanepoint = Lanepoint()
-            lanepoint.position.x = self.data['x'][i*90]
-            lanepoint.position.y = self.data['y'][i*90]
-            # print("ref path", lanepoint.position.x, lanepoint.position.y)
-            self.ref_path.central_path.append(lanepoint)
-            t_array.append(lanepoint)
-        self.ref_path.central_path_array = np.array(t_array)
-        self.ref_path.speed_limit = 60/3.6 # m/s
-        self.dynamic_map.update_ref_path_from_routing(self.ref_path) 
-
-class Werling_planner():
-    def  __init__(self,):
-        self.trajectory_planner = JunctionTrajectoryPlanner()
-        self.dynamic_map = DynamicMap()
-        self.read_ref_path_from_file()
-    
-    def update_path(self, obs, done):# TODO: represent a obs
-        if done or len(obs)<1:
-            self.trajectory_planner.clear_buff(clean_csp=False)
-        else:
-            self.dynamic_map.update_map_from_list_obs(obs)
-
-
-            candidate_trajectories_tuple = self.trajectory_planner.generate_candidate_trajectories(self.dynamic_map)
-
-            chosen_action_id = 2
-            chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
-
             return chosen_trajectory
     
     def read_ref_path_from_file(self):
@@ -534,17 +456,20 @@ def main():
                         perception_obstacle_pb2.PerceptionObstacles,
                         player.perception_callback)
 
+    
+    RTK = 0
+
     while not cyber.is_shutdown():
         now = cyber_time.Time.now().to_sec()
         # # New add
-        # obs =  player.get_obs()
-        # trajectory = planner.update_path(obs, done=0)
-        # if trajectory is not None:
-        #     player.publish_planningmsg_trajectory(trajectory)
-        
-        
-        player.publish_planningmsg()
-        # player.publish_planningmsg_start()
+        if not RTK:
+            obs =  player.get_obs()
+            trajectory = planner.update_path(obs, done=0)
+            if trajectory is not None:
+                player.publish_planningmsg_trajectory(trajectory)
+        else:
+            # player.publish_planningmsg()
+            player.publish_planningmsg_start()
         sleep_time = 0.1 - (cyber_time.Time.now().to_sec() - now)
         if sleep_time > 0:
             time.sleep(sleep_time)
@@ -553,9 +478,5 @@ def main():
 if __name__ == '__main__':
     cyber.init()
     main()
-
-
-
-    # plt.plot(adc_point.path_point.x,adc_point.path_point.y)
 
     cyber.shutdown()
