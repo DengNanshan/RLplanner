@@ -225,6 +225,33 @@ class RtkPlayer(object):
             planningdata.trajectory_point.extend([adc_point])
 
         planningdata.estop.is_estop = False
+
+        
+        #########plot debug"
+        # print(planningdata.trajectory_point.path_point)
+        # plt.plot(planningdata.trajectory_point.path_point.x,planningdata.trajectory_point.path_point.y)
+        # plt.savefig("./plot rout")
+        # print("save fig")
+        """
+        dns test plot debug begin
+        """
+        # temp_chart = chart_pb2.Chart()
+        # temp_car = chart_pb2.Car()
+        # # temp_car.label("1")
+        # temp_car.x = 100
+        # temp_car.y = 1
+        # temp_car.heading = 0
+        # temp_chart.title="dns chart test"
+        # temp_chart.car.extend( [temp_car])
+        # planningdata.debug.planning_data.chart.extend([temp_chart])
+        
+        # add path
+        temp_path =  pnc_point_pb2.Path()
+        temp_path.name= "dns test path"
+        planningdata.debug.planning_data.path.extend([temp_path])
+        """
+        dns test plot debug end 
+        """
         self.planning_pub.write(planningdata)
         # self.logger.debug("Generated Planning Sequence: "
         #                   + str(self.sequence_num - 1))

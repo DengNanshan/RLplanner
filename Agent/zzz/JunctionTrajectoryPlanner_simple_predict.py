@@ -18,7 +18,7 @@ D_ROAD_W = 0.5  # road width sampling length [m]
 DT = 0.1  # time tick [s]
 MAXT = 10.1  # max prediction time [m]
 MINT = 10.0  # min prediction time [m]
-TARGET_SPEED = 10.0 / 3.6  # target speed [m/s]
+TARGET_SPEED = 30.0 / 3.6  # target speed [m/s]
 D_T_S = 5.0 / 3.6  # target speed sampling length [m/s]
 N_S_SAMPLE = 1  # sampling number of target speed
 
@@ -136,7 +136,7 @@ class JunctionTrajectoryPlanner_SP(object):
             return None
 
     def trajectory_update_CP(self, DCP_action, update=True):
-        # if CP_action == 0:
+        # if CP_action == 0:QuinticPolynomial
         #     # print("[CP]:----> Brake") 
         #     generated_trajectory =  self.all_trajectory[0][0]
         #     trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y]

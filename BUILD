@@ -39,3 +39,23 @@ py_binary(
         "//modules/tools/common:proto_utils",
     ],
 )
+
+
+py_binary(
+    name = "dns_map_planner",
+    srcs = ["dns_map_planner.py"],
+    deps = [
+        "//cyber/python/cyber_py3:cyber",
+        "//cyber/python/cyber_py3:cyber_time",
+        "//modules/canbus/proto:chassis_py_pb2",
+        "//modules/common/configs/proto:vehicle_config_py_pb2",
+        "//modules/common/proto:drive_state_py_pb2",
+        "//modules/common/proto:pnc_point_py_pb2",
+        "//modules/control/proto:pad_msg_py_pb2",
+        "//modules/localization/proto:localization_py_pb2",
+        "//modules/planning/proto:planning_py_pb2",
+        "//modules/prediction/proto:prediction_obstacle_py_pb2",
+        "//modules/tools/common:logger",
+        "//modules/tools/common:proto_utils",
+    ],
+)
