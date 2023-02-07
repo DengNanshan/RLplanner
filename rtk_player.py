@@ -293,7 +293,7 @@ class RtkPlayer(object):
 
     
 
-    def publish_planningmsg_trajectory(self, trajectory):
+    def publish_planningmsg_trajectory(self, trajectory, action_id):
                 # print("trajectory.trajectory",trajectory.trajectory)
                 if not self.localization_received:
                     self.logger.warning(
@@ -310,8 +310,8 @@ class RtkPlayer(object):
 
                 planningdata.total_path_length = self.data['s'][self.end] - \
                     self.data['s'][self.start]
-                self.logger.info("total number of planning data point: %d" %
-                                (self.end - self.start))
+                # self.logger.info("total number of planning data point: %d" %
+                #                 (self.end - self.start))
                 planningdata.total_path_time = self.data['time'][self.end] - \
                     self.data['time'][self.start]
                 planningdata.gear = 1
@@ -325,8 +325,8 @@ class RtkPlayer(object):
                     adc_point.path_point.z = 0
                     adc_point.v =  trajectory.trajectory[i][3]
                     adc_point.a =  trajectory.trajectory[i][5]
-                    adc_point.path_point.kappa = 0
-                    adc_point.path_point.dkappa =0
+                    adc_point.path_point.kappa = -trajectory.trajectory[i][6] #curvature
+                    adc_point.path_point.dkappa = 0 #curvature_change_rate
                     adc_point.path_point.theta =  trajectory.trajectory[i][2]
                     adc_point.path_point.s = trajectory.trajectory[i][4]
 
@@ -339,6 +339,10 @@ class RtkPlayer(object):
                     adc_point.relative_time = time_diff  - now
 
                     planningdata.trajectory_point.extend([adc_point])
+                # if action_id == 0:
+                #     planningdata.estop.is_estop = True
+                # else:
+                #     planningdata.estop.is_estop = False
 
                 planningdata.estop.is_estop = False
             
@@ -387,6 +391,7 @@ class Werling_planner_SP():
     def update_path(self, obs, done):# TODO: represent a obs
         if done or len(obs)<1:
             self.trajectory_planner.clear_buff(clean_csp=False)
+            return None, None
         else:
             self.dynamic_map.update_map_from_list_obs(obs)
 
@@ -395,10 +400,12 @@ class Werling_planner_SP():
             chosen_action_id = index
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
             # print("chosen_",chosen_trajectory.trajectory)
-            return chosen_trajectory
+            return chosen_trajectory, chosen_action_id
     
     def read_ref_path_from_file(self):
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
+        # record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
+
         try:
             file_handler = open(record_file, 'r')
         except (FileNotFoundError, IOError) as ex:
@@ -432,6 +439,7 @@ class Werling_planner():
     def update_path(self, obs, done):# TODO: represent a obs
         if done or len(obs)<1:
             self.trajectory_planner.clear_buff(clean_csp=False)
+            return None, None
         else:
             self.dynamic_map.update_map_from_list_obs(obs)
 
@@ -441,10 +449,11 @@ class Werling_planner():
             chosen_action_id = 2
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
 
-            return chosen_trajectory
+            return chosen_trajectory, chosen_action_id
     
     def read_ref_path_from_file(self):
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
+        # record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
         try:
             file_handler = open(record_file, 'r')
         except (FileNotFoundError, IOError) as ex:
@@ -483,7 +492,9 @@ def main():
         use_stdout=True,
         log_level=logging.DEBUG)
 
-    record_file = os.path.join(APOLLO_ROOT, 'data/log/garage.csv')
+    # record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+    record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
+
 
     player = RtkPlayer(record_file, node)
     
@@ -511,9 +522,9 @@ def main():
         now = cyber_time.Time.now().to_sec()
         # # New add
         obs =  player.get_obs()
-        trajectory = planner.update_path(obs, done=0)
+        trajectory, action_id = planner.update_path(obs, done=0)
         if trajectory is not None:
-            player.publish_planningmsg_trajectory(trajectory)
+            player.publish_planningmsg_trajectory(trajectory, action_id)
         
         
         # player.publish_planningmsg()

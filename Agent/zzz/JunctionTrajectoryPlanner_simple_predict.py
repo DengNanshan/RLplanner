@@ -13,21 +13,21 @@ from Agent.zzz.tools import *
 MAX_SPEED = 50.0 / 3.6  # maximum speed [m/s]
 MAX_ACCEL = 10.0  # maximum acceleration [m/ss]
 MAX_CURVATURE = 500.0  # maximum curvature [1/m]
-MAX_ROAD_WIDTH = 4.0   # maximum road width [m] # related to RL action space
+MAX_ROAD_WIDTH = 1.0   # maximum road width [m] # related to RL action space
 D_ROAD_W = 0.5  # road width sampling length [m]
 DT = 0.1  # time tick [s]
 MAXT = 10.1  # max prediction time [m]
 MINT = 10.0  # min prediction time [m]
-TARGET_SPEED = 30.0 / 3.6  # target speed [m/s]
-D_T_S = 5.0 / 3.6  # target speed sampling length [m/s]
-N_S_SAMPLE = 1  # sampling number of target speed
+TARGET_SPEED = 10.0 / 3.6  # target speed [m/s]
+D_T_S = 3.0 / 3.6  # target speed sampling length [m/s]
+N_S_SAMPLE = 2  # sampling number of target speed
 
 # Collision check
-OBSTACLES_CONSIDERED = 100
-ROBOT_RADIUS = 3.0  # robot radius [m]
+OBSTACLES_CONSIDERED = 50
+ROBOT_RADIUS = 2  # robot radius [m]
 RADIUS_SPEED_RATIO = 0 # higher speed, bigger circle
 MOVE_GAP = 1.5
-ONLY_SAMPLE_TO_LEFT = True
+ONLY_SAMPLE_TO_LEFT = False
 
 # Cost weights
 KJ = 0.1
@@ -159,9 +159,16 @@ class JunctionTrajectoryPlanner_SP(object):
         if DCP_action == 0:
             # print("[CP]:----> Brake") 
             generated_trajectory =  self.all_trajectory[0][0]
+            generated_trajectory.c.append(0)
             trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y, 
-                                                                generated_trajectory.yaw, generated_trajectory.s_d,
-                                                                generated_trajectory.s, generated_trajectory.s_dd ]
+                                                                generated_trajectory.yaw, [0] * len(generated_trajectory.x),
+                                                                generated_trajectory.s, generated_trajectory.s_dd, 
+                                                                generated_trajectory.c ]
+            # for i in range(len(trajectory_array[3])):
+            #     trajectory_array[3][i]=0
+                # trajectory_array[5][i]=0
+
+
             trajectory_action = TrajectoryAction(trajectory_array, [0] * len(trajectory_array), generated_trajectory)
             trajectory_action.original_trajectory.cf = 500
             trajectory_action.original_trajectory.s_d = [0] * len(trajectory_array)
@@ -170,9 +177,12 @@ class JunctionTrajectoryPlanner_SP(object):
         bestpath = self.all_trajectory[int(DCP_action - 1)][0]
         # bestpath.s_d
         # print("bestpath.yaw",bestpath.yaw)
+        bestpath.c.append(0)
         trajectory_array = np.c_[bestpath.x, bestpath.y, 
                                                             bestpath.yaw, bestpath.s_d,
-                                                             bestpath.s, bestpath.s_dd ]
+                                                             bestpath.s, bestpath.s_dd,
+                                                             bestpath.c ]
+        # print("curve",bestpath.c)
         
         # next time when you calculate start state
         if update==True:
@@ -261,7 +271,7 @@ class JunctionTrajectoryPlanner_SP(object):
 
             start_state.s0 = ffstate.s 
             start_state.c_d = -ffstate.d # current lateral position [m]
-            start_state.c_d_d = ffstate.vd # current lateral speed [m/s]
+            start_state.c_d_d = ffstate.vd  # current lateral speed [m/s]
             start_state.c_d_dd = 0   # current latral acceleration [m/s]
 
         # print("start_state",ffstate.psi)
