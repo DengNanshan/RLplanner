@@ -13,13 +13,13 @@ from Agent.zzz.tools import *
 MAX_SPEED = 50.0 / 3.6  # maximum speed [m/s]
 MAX_ACCEL = 10.0  # maximum acceleration [m/ss]
 MAX_CURVATURE = 500.0  # maximum curvature [1/m]
-MAX_ROAD_WIDTH = 1.0   # maximum road width [m] # related to RL action space
-D_ROAD_W = 0.5  # road width sampling length [m]
-DT = 0.1  # time tick [s]
-MAXT = 10.1  # max prediction time [m]
-MINT = 10.0  # min prediction time [m]
-TARGET_SPEED = 10.0 / 3.6  # target speed [m/s]
-D_T_S = 3.0 / 3.6  # target speed sampling length [m/s]
+MAX_ROAD_WIDTH = 0.2   # maximum road width [m] # related to RL action space
+D_ROAD_W = 0.2  # road width sampling length [m]
+DT = 0.05  # time tick [s]
+MAXT = 8.1  # max prediction time [m]
+MINT = 8.0  # min prediction time [m]
+TARGET_SPEED = 20.0 / 3.6  # target speed [m/s]
+D_T_S = 4.0 / 3.6  # target speed sampling length [m/s]
 N_S_SAMPLE = 2  # sampling number of target speed
 
 # Collision check
@@ -87,7 +87,7 @@ class JunctionTrajectoryPlanner_SP(object):
         if self.csp is None or clean_current_csp:
             self.reference_path = dynamic_map.lanes[0].central_path # When dynamic map has one ref path in lane
             ref_path_ori = convert_path_to_ndarray(self.reference_path)
-            self.ref_path = dense_polyline2d(ref_path_ori, 2)
+            self.ref_path = ref_path_ori#dense_polyline2d(ref_path_ori, 2)
             self.ref_path_tangets = np.zeros(len(self.ref_path))
 
             Frenetrefx = self.ref_path[:,0]
@@ -306,9 +306,14 @@ class JunctionTrajectoryPlanner_SP(object):
         time_consume3 = t3 - t2
         candidate_len3 = len(sorted_fplist)
 
+        # generate brake path
+        # bp_list = self.calc_brake_paths(c_speed, start_state)
+
+
         for fp, score, index in sorted_fplist:
             if self.obs_prediction.check_collision(fp):
                 return fp, index + 1 # 0 for brake trajectory
+
         
         return None,0
 
@@ -378,6 +383,54 @@ class JunctionTrajectoryPlanner_SP(object):
 
         return frenet_paths
 
+
+    # def calc_brake_paths(self, c_speed, start_state): # input state
+
+    #     frenet_paths = []
+
+    #     s0 = start_state.s0
+    #     c_d = start_state.c_d
+    #     c_d_d = start_state.c_d_d
+    #     c_d_dd = start_state.c_d_dd
+
+    #     # generate path to each offset goal
+    #     for di in np.arange(-MAX_ROAD_WIDTH, MAX_ROAD_WIDTH, D_ROAD_W):
+
+    #         # Lateral motion planning
+    #         for Ti in np.arange(10, MAXT, DT):
+    #             fp = Frenet_path()
+
+    #             lat_qp = quintic_polynomial(c_d, c_d_d, c_d_dd, di, 0.0, 0.0, Ti) 
+
+    #             fp.t = np.arange(0.0, Ti, DT).tolist() # [t for t in np.arange(0.0, Ti, DT)]
+    #             fp.d = [lat_qp.calc_point(t) for t in fp.t]                        
+    #             fp.d_d = [lat_qp.calc_first_derivative(t) for t in fp.t]
+    #             fp.d_dd = [lat_qp.calc_second_derivative(t) for t in fp.t]
+    #             fp.d_ddd = [lat_qp.calc_third_derivative(t) for t in fp.t]
+
+    #             tv = 0
+    #             tfp = copy.deepcopy(fp)
+    #             lon_qp = quartic_polynomial(s0, c_speed, 0.0, tv, 0.0, Ti)
+
+    #             tfp.s = [lon_qp.calc_point(t) for t in fp.t]
+    #             tfp.s_d = [lon_qp.calc_first_derivative(t) for t in fp.t]
+    #             tfp.s_dd = [lon_qp.calc_second_derivative(t) for t in fp.t]
+    #             tfp.s_ddd = [lon_qp.calc_third_derivative(t) for t in fp.t]
+
+    #             Jp = sum(np.power(tfp.d_ddd, 2))  # square of jerk
+    #             Js = sum(np.power(tfp.s_ddd, 2))  # square of jerk
+
+    #             # square of diff from target speed
+    #             ds = (self.target_speed - tfp.s_d[-1])**2
+
+    #             tfp.cd = KJ * Jp + KT * Ti + KD * tfp.d[-1]**2
+    #             tfp.cv = KJ * Js + KT * Ti + KD * ds
+    #             tfp.cf = KLAT * tfp.cd + KLON * tfp.cv
+
+    #             frenet_paths.append(tfp)
+
+    #     return frenet_paths
+
     def calc_global_paths(self, fplist, csp):
 
         for fp in fplist:
@@ -392,28 +445,29 @@ class JunctionTrajectoryPlanner_SP(object):
                 fy = iy + di * math.sin(iyaw + math.pi / 2.0)
                 fp.x.append(fx)
                 fp.y.append(fy)
+                fp.yaw.append(iyaw)
 
             # calc yaw and ds
             dx = np.diff(np.array(fp.x))
             dy = np.diff(np.array(fp.y))
-            fp.yaw = np.arctan2(dy,dx).tolist()
+            # fp.yaw = np.arctan2(dy,dx).tolist()
             fp.ds = np.sqrt(dx**2+dy**2).tolist()
             
-            try:
-                fp.yaw.append(fp.yaw[-1])
-                fp.ds.append(fp.ds[-1])
-            except:
-                fp.yaw.append(0.1)
-                fp.ds.append(0.1)
+            # try:
+            #     fp.yaw.append(fp.yaw[-1])
+            #     fp.ds.append(fp.ds[-1])
+            # except:
+            #     fp.yaw.append(0.1)
+            #     fp.ds.append(0.1)
 
             # calc curvature
-            # fp.c = (np.diff(fp.yaw) / np.array(fp.ds)).tolist()
+            fp.c = (np.diff(fp.yaw) / np.array(fp.ds)).tolist()
 
-            for i in range(len(fp.yaw) - 1):
-                # carla simulation bug
-                if fp.ds[i]<0.00001:
-                    fp.ds[i] = 0.1
-                fp.c.append((fp.yaw[i + 1] - fp.yaw[i]) / fp.ds[i])
+            # for i in range(len(fp.yaw) - 1):
+            #     # carla simulation bug
+            #     if fp.ds[i]<0.00001:
+            #         fp.ds[i] = 0.1
+            #     fp.c.append((fp.yaw[i + 1] - fp.yaw[i]) / fp.ds[i])
 
         return fplist
 

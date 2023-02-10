@@ -114,6 +114,10 @@ class RtkPlayer(object):
         self.carvx = 0
         self.carvy = 0
         self.obss = None
+
+        # stop
+        self.stop_count = 0
+        self.brake_trajectory = None
         
     def localization_callback(self, data):
         """
@@ -294,61 +298,75 @@ class RtkPlayer(object):
     
 
     def publish_planningmsg_trajectory(self, trajectory, action_id):
-                # print("trajectory.trajectory",trajectory.trajectory)
-                if not self.localization_received:
-                    self.logger.warning(
-                        "localization not received yet when publish_planningmsg")
-                    return
+        # print("trajectory.trajectory",trajectory.trajectory)
+        if not self.localization_received:
+            self.logger.warning(
+                "localization not received yet when publish_planningmsg")
+            return
 
-                planningdata = planning_pb2.ADCTrajectory()
-                now = cyber_time.Time.now().to_sec()
-                planningdata.header.timestamp_sec = now
-                planningdata.header.module_name = "planning"
-                planningdata.header.sequence_num = self.sequence_num
-                self.sequence_num = self.sequence_num + 1
-
-
-                planningdata.total_path_length = self.data['s'][self.end] - \
-                    self.data['s'][self.start]
-                # self.logger.info("total number of planning data point: %d" %
-                #                 (self.end - self.start))
-                planningdata.total_path_time = self.data['time'][self.end] - \
-                    self.data['time'][self.start]
-                planningdata.gear = 1
-                planningdata.engage_advice.advice = \
-                    drive_state_pb2.EngageAdvice.READY_TO_ENGAGE
-
-                for i in range(len(trajectory.trajectory)-1):
-                    adc_point = pnc_point_pb2.TrajectoryPoint()
-                    adc_point.path_point.x = trajectory.trajectory[i][0]
-                    adc_point.path_point.y = trajectory.trajectory[i][1]
-                    adc_point.path_point.z = 0
-                    adc_point.v =  trajectory.trajectory[i][3]
-                    adc_point.a =  trajectory.trajectory[i][5]
-                    adc_point.path_point.kappa = -trajectory.trajectory[i][6] #curvature
-                    adc_point.path_point.dkappa = 0 #curvature_change_rate
-                    adc_point.path_point.theta =  trajectory.trajectory[i][2]
-                    adc_point.path_point.s = trajectory.trajectory[i][4]
+        planningdata = planning_pb2.ADCTrajectory()
+        now = cyber_time.Time.now().to_sec()
+        planningdata.header.timestamp_sec = now
+        planningdata.header.module_name = "planning"
+        planningdata.header.sequence_num = self.sequence_num
+        self.sequence_num = self.sequence_num + 1
 
 
-                    # time_diff = self.data['time'][i] - \
-                    #     self.data['time'][0]
+        planningdata.total_path_length = self.data['s'][self.end] - \
+            self.data['s'][self.start]
+        # self.logger.info("total number of planning data point: %d" %
+        #                 (self.end - self.start))
+        planningdata.total_path_time = self.data['time'][self.end] - \
+            self.data['time'][self.start]
+        planningdata.gear = 1
+        planningdata.engage_advice.advice = \
+            drive_state_pb2.EngageAdvice.READY_TO_ENGAGE
 
-                    time_diff = 0.1*i
+        
+        # to fix trajectory when continuously brakes
+        if action_id == 0:
+            if self.stop_count < 1:
+                self.brake_trajectory = trajectory
+                self.stop_count += 1
+            else:
+                self.stop_count += 1 
+        
+            trajectory = self.brake_trajectory
+        else:
+            self.brake_trajectory = None
+            self.stop_count = 0
 
-                    adc_point.relative_time = time_diff  - now
+        for i in range(len(trajectory.trajectory)-2):
+            adc_point = pnc_point_pb2.TrajectoryPoint()
+            adc_point.path_point.x = trajectory.trajectory[i][0]
+            adc_point.path_point.y = trajectory.trajectory[i][1]
+            adc_point.path_point.z = 0
+            adc_point.path_point.kappa = -trajectory.trajectory[i][6]*0.1 #curvature
+            adc_point.path_point.dkappa = (trajectory.trajectory[i+1][6]-trajectory.trajectory[i][6])/0.1 #curvature_change_rate
+            adc_point.v =  trajectory.trajectory[i][3]
+            adc_point.a =  trajectory.trajectory[i][5]
+            adc_point.path_point.theta =  trajectory.trajectory[i][2]
+            adc_point.path_point.s = trajectory.trajectory[i][4]
 
-                    planningdata.trajectory_point.extend([adc_point])
-                # if action_id == 0:
-                #     planningdata.estop.is_estop = True
-                # else:
-                #     planningdata.estop.is_estop = False
 
-                planningdata.estop.is_estop = False
-            
-                self.planning_pub.write(planningdata)
-                self.logger.debug("Generated Planning Sequence: "
-                                + str(self.sequence_num - 1))
+            # time_diff = self.data['time'][i] - \
+            #     self.data['time'][0]
+
+            time_diff = 0.1*i
+
+            adc_point.relative_time = time_diff  - (now - self.starttime)
+
+            planningdata.trajectory_point.extend([adc_point])
+        # if action_id == 0:
+        #     planningdata.estop.is_estop = True
+        # else:
+        #     planningdata.estop.is_estop = False
+
+        planningdata.estop.is_estop = False
+    
+        self.planning_pub.write(planningdata)
+        self.logger.debug("Generated Planning Sequence: "
+                        + str(self.sequence_num - 1))
 
     def shutdown(self):
         """
@@ -398,13 +416,14 @@ class Werling_planner_SP():
             trajectory_action, index = self.trajectory_planner.trajectory_update(self.dynamic_map)
 
             chosen_action_id = index
+            print("action_index",chosen_action_id)
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
             # print("chosen_",chosen_trajectory.trajectory)
             return chosen_trajectory, chosen_action_id
     
     def read_ref_path_from_file(self):
-        # record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+        # record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang_indside.csv')
 
         try:
             file_handler = open(record_file, 'r')
@@ -452,8 +471,8 @@ class Werling_planner():
             return chosen_trajectory, chosen_action_id
     
     def read_ref_path_from_file(self):
-        # record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+        # record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
         try:
             file_handler = open(record_file, 'r')
         except (FileNotFoundError, IOError) as ex:
@@ -492,8 +511,8 @@ def main():
         use_stdout=True,
         log_level=logging.DEBUG)
 
-    # record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
-    record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
+    record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+    # record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
 
 
     player = RtkPlayer(record_file, node)

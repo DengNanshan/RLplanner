@@ -5,8 +5,8 @@ import time
 
 import numpy as np
 
-ADD_INIT_SPEED = 3
-VELOCITY_THRESHOLD = 1
+MAX_PEED = 60/3.6 #m/s
+VELOCITY_SCALE = 0.1
 
 class Position():
     def __init__(self):
@@ -117,13 +117,13 @@ class DynamicMap():
         ego_vehicle_state = obs[0]
         self.ego_vehicle.x = ego_vehicle_state[0]
         self.ego_vehicle.y = ego_vehicle_state[1]
-        if ego_vehicle_state[2] < VELOCITY_THRESHOLD and ego_vehicle_state[3] < VELOCITY_THRESHOLD:
-            self.ego_vehicle.vx = ego_vehicle_state[2] + ADD_INIT_SPEED*math.cos(ego_vehicle_state[4]) #FIXME: it is because the init planned trajectory is not consider ego yaw
-            self.ego_vehicle.vy = ego_vehicle_state[3] + ADD_INIT_SPEED*math.sin(ego_vehicle_state[4])
-        else:
-            self.ego_vehicle.vx = ego_vehicle_state[2]
-            self.ego_vehicle.vy = ego_vehicle_state[3] 
+        # self.ego_vehicle.vx = ego_vehicle_state[2]
+        # self.ego_vehicle.vy = ego_vehicle_state[3] 
         self.ego_vehicle.v = math.sqrt(self.ego_vehicle.vx ** 2 + self.ego_vehicle.vy ** 2)
+
+        self.ego_vehicle.vx = ego_vehicle_state[2] + VELOCITY_SCALE * (MAX_PEED-self.ego_vehicle.v)*math.cos(ego_vehicle_state[4]) #FIXME: it is because the init planned trajectory is not consider ego yaw
+        self.ego_vehicle.vy = ego_vehicle_state[3] + VELOCITY_SCALE * (MAX_PEED-self.ego_vehicle.v)*math.sin(ego_vehicle_state[4])
+        
         self.ego_vehicle.yaw = ego_vehicle_state[4]
         self.ego_vehicle.lane_idx = 0
 
