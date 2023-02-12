@@ -193,8 +193,8 @@ def main(argv):
         log_level=logging.DEBUG)
     print("runtime log is in %s%s" % (log_dir, "rtk_recorder.log"))
 
-    record_file = log_dir + "/garage3.csv"
-    # record_file = log_dir + "/yizhuang_indside.csv"
+    # record_file = log_dir + "/garage3.csv"
+    record_file = log_dir + "/garage4_length.csv"
     recorder = RtkRecord(record_file)
     atexit.register(recorder.shutdown)
     node.create_reader('/apollo/canbus/chassis',

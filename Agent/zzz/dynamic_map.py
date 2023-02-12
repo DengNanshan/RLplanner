@@ -42,6 +42,7 @@ class Vehicle():
         self.lane_idx = 0
         self.dis_to_lane_tail = 0
         self.dis_to_lane_head = 0
+        self.type = None
 
 class DynamicMap():
     def __init__(self, target_speed = 10):
@@ -110,6 +111,27 @@ class DynamicMap():
 
         # print("[Dynamic Map]: Add env vehicles num", len(self.vehicles))
 
+    def get_average_velocity_on_s(self):
+
+        return target_velocity
+
+    def interested_area(self, ego_vehicle_state, obs):
+        w = 2
+        ego_x = ego_vehicle_state[0]
+        ego_y = ego_vehicle_state[1]
+        ego_yaw = ego_vehicle_state[4]
+        obs_x = obs[0]
+        obs_y = obs[1]
+        k = math.tan(ego_yaw)
+        d = ego_y - ego_x * math.tan(ego_yaw)
+        if obs_y > k * obs_x + d - w * math.sin(ego_yaw + 0.5*3.14) and obs_y < k * obs_x + d + w * math.sin(ego_yaw + 0.5*3.14):
+            return False
+        else:
+            return True
+            
+    def add_target_v_on_s(self, target_v_list):
+        self.target_v_list = target_v_list
+
     def update_map_from_list_obs(self, obs):
         self.init_dynamic_map()
         self.real_time_obs = obs
@@ -121,14 +143,15 @@ class DynamicMap():
         # self.ego_vehicle.vy = ego_vehicle_state[3] 
         self.ego_vehicle.v = math.sqrt(self.ego_vehicle.vx ** 2 + self.ego_vehicle.vy ** 2)
 
-        self.ego_vehicle.vx = ego_vehicle_state[2] + VELOCITY_SCALE * (MAX_PEED-self.ego_vehicle.v)*math.cos(ego_vehicle_state[4]) #FIXME: it is because the init planned trajectory is not consider ego yaw
-        self.ego_vehicle.vy = ego_vehicle_state[3] + VELOCITY_SCALE * (MAX_PEED-self.ego_vehicle.v)*math.sin(ego_vehicle_state[4])
+        # self.ego_vehicle.vx = ego_vehicle_state[2] + VELOCITY_SCALE * (MAX_PEED-self.ego_vehicle.v)*math.cos(ego_vehicle_state[4]) #FIXME: it is because the init planned trajectory is not consider ego yaw
+        # self.ego_vehicle.vy = ego_vehicle_state[3] + VELOCITY_SCALE * (MAX_PEED-self.ego_vehicle.v)*math.sin(ego_vehicle_state[4])
         
         self.ego_vehicle.yaw = ego_vehicle_state[4]
         self.ego_vehicle.lane_idx = 0
 
         # Env information from obs
         for i in range(1,len(obs)):
+            # if self.interested_area(ego_vehicle_state, obs[i]):
             vehicle = Vehicle()
             vehicle.x = obs[i][0]
             vehicle.y = obs[i][1]
@@ -137,11 +160,33 @@ class DynamicMap():
             vehicle.v = math.sqrt(vehicle.vx ** 2 + vehicle.vy ** 2)
             vehicle.yaw = obs[i][4]
             vehicle.lane_idx = 0
+            vehicle.type = obs[i][5] # UNKNOWN = 0; UNKNOWN_MOVABLE = 1; UNKNOWN_UNMOVABLE = 2; PEDESTRIAN = 3;  // Pedestrian, usually determined by moving behavior.
+                                    # BICYCLE = 4;     // bike, motor bike
+                                    # VEHICLE = 5;     // Passenger car or truck.
             self.vehicles.append(vehicle)
+
+        
 
         # print("[Dynamic Map]: Add env vehicles num", len(self.vehicles))
 
         # self.done = env.done
+
+    def generate_intersection_obs(self, intersection_s_list, csp):
+        for s in intersection_s_list:
+            vehicle = Vehicle()
+            # print("debug",s)
+            ix, iy = csp.calc_position(s)
+            vehicle.x = ix
+            vehicle.y = iy
+            vehicle.vx = 0
+            vehicle.vy = 0
+            vehicle.v = math.sqrt(vehicle.vx ** 2 + vehicle.vy ** 2)
+            vehicle.yaw = csp.calc_yaw(s) + 3.14/2
+            vehicle.lane_idx = 0
+            vehicle.type = 0 # UNKNOWN = 0; UNKNOWN_MOVABLE = 1; UNKNOWN_UNMOVABLE = 2; PEDESTRIAN = 3;  // Pedestrian, usually determined by moving behavior.
+                                    # BICYCLE = 4;     // bike, motor bike
+                                    # VEHICLE = 5;     // Passenger car or truck.
+            self.vehicles.append(vehicle)
         
     def update_ref_path(self, env):
         # Only append Ref path here

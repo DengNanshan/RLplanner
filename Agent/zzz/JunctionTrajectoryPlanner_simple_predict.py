@@ -13,21 +13,21 @@ from Agent.zzz.tools import *
 MAX_SPEED = 50.0 / 3.6  # maximum speed [m/s]
 MAX_ACCEL = 10.0  # maximum acceleration [m/ss]
 MAX_CURVATURE = 500.0  # maximum curvature [1/m]
-MAX_ROAD_WIDTH = 0.2   # maximum road width [m] # related to RL action space
-D_ROAD_W = 0.2  # road width sampling length [m]
-DT = 0.05  # time tick [s]
-MAXT = 8.1  # max prediction time [m]
-MINT = 8.0  # min prediction time [m]
+D_CENTER = 0   
+D_WIDTH = 0.5  
+D_S_SAMPLE = 0.5
+DT = 0.1  # time tick [s]
+MAXT = 6.1  # max prediction time [m]
+MINT = 6.0  # min prediction time [m]
 TARGET_SPEED = 20.0 / 3.6  # target speed [m/s]
-D_T_S = 4.0 / 3.6  # target speed sampling length [m/s]
-N_S_SAMPLE = 2  # sampling number of target speed
+D_T_S = 5.0 / 3.6  # target speed sampling length [m/s]
+N_S_SAMPLE = 4  # sampling number of target speed
 
 # Collision check
 OBSTACLES_CONSIDERED = 50
 ROBOT_RADIUS = 2  # robot radius [m]
 RADIUS_SPEED_RATIO = 0 # higher speed, bigger circle
 MOVE_GAP = 1.5
-ONLY_SAMPLE_TO_LEFT = False
 
 # Cost weights
 KJ = 0.1
@@ -59,6 +59,14 @@ class JunctionTrajectoryPlanner_SP(object):
         self.move_gap = MOVE_GAP
         self.target_speed = TARGET_SPEED
         self.dts = D_T_S
+        self.d_center = D_CENTER
+        self.d_width = D_WIDTH 
+        self.d_s_sample = D_S_SAMPLE
+
+        self.n_s_sample = N_S_SAMPLE
+        self.dt = DT
+        self.maxt = MAXT
+        self.mint = MINT
         
         # initialize prediction module
         self.obs_prediction = Prediction(OBSTACLES_CONSIDERED, MAXT, DT, self.radius, RADIUS_SPEED_RATIO, self.move_gap)
@@ -135,39 +143,38 @@ class JunctionTrajectoryPlanner_SP(object):
         else:
             return None
 
-    def trajectory_update_CP(self, DCP_action, update=True):
-        # if CP_action == 0:QuinticPolynomial
-        #     # print("[CP]:----> Brake") 
-        #     generated_trajectory =  self.all_trajectory[0][0]
-        #     trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y]
-        #     trajectory_action = TrajectoryAction(trajectory_array, [0] * len(trajectory_array))
-        #     return trajectory_action          
-            
-        # fplist = self.all_trajectory  
-        # bestpath = fplist[int(CP_action - 1)][0]
-        # bestpath.s_d
-        # trajectory_array = np.c_[bestpath.x, bestpath.y]
-        
-        # # next time when you calculate start state
-        # if update==True:
-        #     self.last_trajectory_array_rule = trajectory_array
-        #     self.last_trajectory_rule = bestpath 
+    def generate_candidate_trajectories(self, dynamic_map): # not doing collision check
+        if self.initialize(dynamic_map):
+            index = 0
 
-        # trajectory_action = TrajectoryAction(trajectory_array, bestpath.s_d[:len(trajectory_array)])
-        # # print("[CP]: ------> CP Successful Planning")           
-        # return trajectory_action
+            start_state = self.calculate_start_state(dynamic_map)
+           
+            fplist = self.calc_frenet_paths(self.c_speed, start_state)
+            fplist = self.calc_global_paths(fplist, self.csp)
+
+            path_tuples = []
+            i = 0
+            for fp in fplist:
+                one_path = [fp, fp.cf, i]
+                i = i + 1
+                path_tuples.append(one_path)
+            self.all_trajectory = path_tuples
+
+            return self.all_trajectory
+       
+        else:
+            return None 
+
+    def trajectory_update_CP(self, DCP_action, update=True):
+
         if DCP_action == 0:
-            # print("[CP]:----> Brake") 
-            generated_trajectory =  self.all_trajectory[0][0]
+            
+            generated_trajectory =  self.brake_trajectory
             generated_trajectory.c.append(0)
             trajectory_array = np.c_[generated_trajectory.x, generated_trajectory.y, 
-                                                                generated_trajectory.yaw, [0] * len(generated_trajectory.x),
+                                                                generated_trajectory.yaw, generated_trajectory.s_d,
                                                                 generated_trajectory.s, generated_trajectory.s_dd, 
                                                                 generated_trajectory.c ]
-            # for i in range(len(trajectory_array[3])):
-            #     trajectory_array[3][i]=0
-                # trajectory_array[5][i]=0
-
 
             trajectory_action = TrajectoryAction(trajectory_array, [0] * len(trajectory_array), generated_trajectory)
             trajectory_action.original_trajectory.cf = 500
@@ -182,7 +189,7 @@ class JunctionTrajectoryPlanner_SP(object):
                                                             bestpath.yaw, bestpath.s_d,
                                                              bestpath.s, bestpath.s_dd,
                                                              bestpath.c ]
-        # print("curve",bestpath.c)
+
         
         # next time when you calculate start state
         if update==True:
@@ -258,37 +265,54 @@ class JunctionTrajectoryPlanner_SP(object):
                 if mindist >= pointdist:
                     mindist = pointdist
                     bestpoint = t
-            start_state.s0 = self.last_trajectory_rule.s[bestpoint]
-            start_state.c_d = self.last_trajectory_rule.d[bestpoint]
-            start_state.c_d_d = self.last_trajectory_rule.d_d[bestpoint]
-            start_state.c_d_dd = self.last_trajectory_rule.d_dd[bestpoint]
-            self.c_speed = dynamic_map.ego_vehicle.v
+            start_state.s = self.last_trajectory_rule.s[bestpoint]
+            start_state.s_d = self.last_trajectory_rule.s_d[bestpoint]
+            start_state.s_dd = self.last_trajectory_rule.s_dd[bestpoint]
+            start_state.s_ddd = self.last_trajectory_rule.s_ddd[bestpoint]
+
+            start_state.d = self.last_trajectory_rule.d[bestpoint]
+            start_state.d_d = self.last_trajectory_rule.d_d[bestpoint]
+            start_state.d_dd = self.last_trajectory_rule.d_dd[bestpoint]
+            start_state.d_ddd = self.last_trajectory_rule.d_ddd[bestpoint]
+
+
+            self.c_speed = self.last_trajectory_rule.s_d[bestpoint]#dynamic_map.ego_vehicle.v
 
         else:
             self.c_speed = dynamic_map.ego_vehicle.v
 
             ffstate = get_frenet_state(dynamic_map.ego_vehicle, self.ref_path, self.ref_path_tangets)
 
-            start_state.s0 = ffstate.s 
-            start_state.c_d = -ffstate.d # current lateral position [m]
-            start_state.c_d_d = ffstate.vd  # current lateral speed [m/s]
-            start_state.c_d_dd = 0   # current latral acceleration [m/s]
+            start_state.s = ffstate.s
+            start_state.s_d = ffstate.vs # current longtitude speed [m/s]
+            start_state.d = -ffstate.d # current lateral position [m]
+            start_state.d_d = ffstate.vd  # current lateral speed [m/s]
+            start_state.d_dd = 0   # current latral acceleration [m/s]
 
-        # print("start_state",ffstate.psi)
+            start_state.s_dd = 0  # current longtitude acceleration [m/s]
+
+        # update target_speed
+        self.target_speed, self.dts = self.get_target_speed(dynamic_map, start_state.s)
+
+        print("----------s",start_state.s)
+
         return start_state
 
+    def get_target_speed(self, dynamic_map, s):
+        target_speed = TARGET_SPEED
+        v_list = dynamic_map.target_v_list
+        for item in v_list:
+            if s > item[0]:
+                target_speed = item[1]
+            else:
+                break
+        dts = int(target_speed*3.6/(N_S_SAMPLE+1))/3.6
+        return target_speed, dts
+
     def frenet_optimal_planning(self, csp, c_speed, start_state):
-        t0 = time.time()
         fplist = self.calc_frenet_paths(c_speed, start_state)
-        t1 = time.time()
-        time_consume1 = t1 - t0
-        candidate_len1 = len(fplist)
-
         fplist = self.calc_global_paths(fplist, csp)
-        t2 = time.time()
-        time_consume2 = t2 - t1
-        candidate_len2 = len(fplist)
-
+      
         # sorted fplist with cost
         path_tuples = []
         i = 0
@@ -300,21 +324,17 @@ class JunctionTrajectoryPlanner_SP(object):
         sorted_fplist = sorted(path_tuples, key=lambda path_tuples: path_tuples[1])
         
         # print("How many action?",len(sorted_fplist))
-
         sorted_fplist = self.check_paths(sorted_fplist)
-        t3 = time.time()
-        time_consume3 = t3 - t2
-        candidate_len3 = len(sorted_fplist)
-
+       
         # generate brake path
-        # bp_list = self.calc_brake_paths(c_speed, start_state)
-
+        self.brake_trajectory = self.calc_brake_paths(c_speed, start_state, self.csp)
 
         for fp, score, index in sorted_fplist:
             if self.obs_prediction.check_collision(fp):
                 return fp, index + 1 # 0 for brake trajectory
 
-        
+        print("self.tagert",self.target_speed)
+
         return None,0
 
     def generate_target_course(self, x, y):
@@ -335,20 +355,16 @@ class JunctionTrajectoryPlanner_SP(object):
 
         frenet_paths = []
 
-        s0 = start_state.s0
-        c_d = start_state.c_d
-        c_d_d = start_state.c_d_d
-        c_d_dd = start_state.c_d_dd
+        s0 = start_state.s
+        c_d = start_state.d
+        c_d_d = start_state.d_d
+        c_d_dd = start_state.d_dd
 
         # generate path to each offset goal
-        if ONLY_SAMPLE_TO_LEFT:
-            left_sample_bound = D_ROAD_W
-        else:
-            left_sample_bound = MAX_ROAD_WIDTH 
-        for di in np.arange(-left_sample_bound, MAX_ROAD_WIDTH, D_ROAD_W):
-
+        for di in np.arange(self.d_center-self.d_width, self.d_center+self.d_width+self.d_s_sample, self.d_s_sample):
+            print("Debug",di)
             # Lateral motion planning
-            for Ti in np.arange(MINT, MAXT, DT):
+            for Ti in np.arange(self.mint, self.maxt, self.dt):
                 fp = Frenet_path()
 
                 lat_qp = quintic_polynomial(c_d, c_d_d, c_d_dd, di, 0.0, 0.0, Ti) 
@@ -360,9 +376,9 @@ class JunctionTrajectoryPlanner_SP(object):
                 fp.d_ddd = [lat_qp.calc_third_derivative(t) for t in fp.t]
 
                 # Loongitudinal motion planning (Velocity keeping)
-                for tv in np.arange(self.target_speed - self.dts * N_S_SAMPLE, self.target_speed + self.dts * N_S_SAMPLE, self.dts):
+                for tv in np.arange(self.target_speed - self.dts * self.n_s_sample, self.target_speed + self.dts * self.n_s_sample, self.dts):
                     tfp = copy.deepcopy(fp)
-                    lon_qp = quartic_polynomial(s0, c_speed, 0.0, tv, 0.0, Ti)
+                    lon_qp = quartic_polynomial(s0, start_state.s_d, start_state.s_dd, tv, 0.0, Ti)
 
                     tfp.s = [lon_qp.calc_point(t) for t in fp.t]
                     tfp.s_d = [lon_qp.calc_first_derivative(t) for t in fp.t]
@@ -383,53 +399,66 @@ class JunctionTrajectoryPlanner_SP(object):
 
         return frenet_paths
 
+    def calc_brake_paths(self, c_speed, start_state, csp): # input state
+        
+        # if c_speed < 5:
+        #     c_speed = 5
 
-    # def calc_brake_paths(self, c_speed, start_state): # input state
 
-    #     frenet_paths = []
+        min_brake_time = 1
+        max_brake_time = c_speed * 3.6 / 1 # higher speed, longer brake trajectory
+        if max_brake_time < 2:
+            max_brake_time = 2
 
-    #     s0 = start_state.s0
-    #     c_d = start_state.c_d
-    #     c_d_d = start_state.c_d_d
-    #     c_d_dd = start_state.c_d_dd
+        brake_paths = []
 
-    #     # generate path to each offset goal
-    #     for di in np.arange(-MAX_ROAD_WIDTH, MAX_ROAD_WIDTH, D_ROAD_W):
+        s0 = start_state.s
+        c_d = start_state.d
+        c_d_d = start_state.d_d
+        c_d_dd = start_state.d_dd
 
-    #         # Lateral motion planning
-    #         for Ti in np.arange(10, MAXT, DT):
-    #             fp = Frenet_path()
+        # generate path to each offset goal
+        di = 0
+        # Lateral motion planning
+        for Ti in np.arange(min_brake_time, int(max_brake_time), 1):
+            fp = Frenet_path()
 
-    #             lat_qp = quintic_polynomial(c_d, c_d_d, c_d_dd, di, 0.0, 0.0, Ti) 
+            lat_qp = quintic_polynomial(c_d, c_d_d, c_d_dd, di, 0.0, 0.0, Ti) 
 
-    #             fp.t = np.arange(0.0, Ti, DT).tolist() # [t for t in np.arange(0.0, Ti, DT)]
-    #             fp.d = [lat_qp.calc_point(t) for t in fp.t]                        
-    #             fp.d_d = [lat_qp.calc_first_derivative(t) for t in fp.t]
-    #             fp.d_dd = [lat_qp.calc_second_derivative(t) for t in fp.t]
-    #             fp.d_ddd = [lat_qp.calc_third_derivative(t) for t in fp.t]
+            fp.t = np.arange(0.0, Ti, DT).tolist() # [t for t in np.arange(0.0, Ti, DT)]
+            fp.d = [lat_qp.calc_point(t) for t in fp.t]                        
+            fp.d_d = [lat_qp.calc_first_derivative(t) for t in fp.t]
+            fp.d_dd = [lat_qp.calc_second_derivative(t) for t in fp.t]
+            fp.d_ddd = [lat_qp.calc_third_derivative(t) for t in fp.t]
 
-    #             tv = 0
-    #             tfp = copy.deepcopy(fp)
-    #             lon_qp = quartic_polynomial(s0, c_speed, 0.0, tv, 0.0, Ti)
+            tv = 0
+            tfp = copy.deepcopy(fp)
+            lon_qp = quartic_polynomial(s0, start_state.s_d, start_state.s_dd, tv, 0.0, Ti)
 
-    #             tfp.s = [lon_qp.calc_point(t) for t in fp.t]
-    #             tfp.s_d = [lon_qp.calc_first_derivative(t) for t in fp.t]
-    #             tfp.s_dd = [lon_qp.calc_second_derivative(t) for t in fp.t]
-    #             tfp.s_ddd = [lon_qp.calc_third_derivative(t) for t in fp.t]
+            tfp.s = [lon_qp.calc_point(t) for t in fp.t]
+            tfp.s_d = [lon_qp.calc_first_derivative(t) for t in fp.t]
+            tfp.s_dd = [lon_qp.calc_second_derivative(t) for t in fp.t]
+            tfp.s_ddd = [lon_qp.calc_third_derivative(t) for t in fp.t]
 
-    #             Jp = sum(np.power(tfp.d_ddd, 2))  # square of jerk
-    #             Js = sum(np.power(tfp.s_ddd, 2))  # square of jerk
+            Jp = sum(np.power(tfp.d_ddd, 2))  # square of jerk
+            Js = sum(np.power(tfp.s_ddd, 2))  # square of jerk
 
-    #             # square of diff from target speed
-    #             ds = (self.target_speed - tfp.s_d[-1])**2
+            # square of diff from target speed
+            ds = (self.target_speed - tfp.s_d[-1])**2
 
-    #             tfp.cd = KJ * Jp + KT * Ti + KD * tfp.d[-1]**2
-    #             tfp.cv = KJ * Js + KT * Ti + KD * ds
-    #             tfp.cf = KLAT * tfp.cd + KLON * tfp.cv
+            tfp.cd = KJ * Jp + KT * Ti + KD * tfp.d[-1]**2
+            tfp.cv = KJ * Js + KT * Ti + KD * ds
+            tfp.cf = KLAT * tfp.cd + KLON * tfp.cv
 
-    #             frenet_paths.append(tfp)
+            brake_paths.append(tfp)
 
-    #     return frenet_paths
+        brake_paths = self.calc_global_paths(brake_paths, csp)
+        brake_paths.reverse()
+        for fp in brake_paths:
+            if self.obs_prediction.check_collision(fp):
+                return fp # 0 for brake trajectory
+
+        return brake_paths[-1]
 
     def calc_global_paths(self, fplist, csp):
 
@@ -485,6 +514,25 @@ class JunctionTrajectoryPlanner_SP(object):
             okind.append(i)
 
         return [fplist[i] for i in okind]
+
+    def generate_low_level_trajectory_for_dns(self, v_target, direction, dynamic_map):
+        self.target_speed = v_target #M/S
+        self.n_s_sample = 1
+        self.dts = 1/3.6
+
+        if direction == -1:
+            self.d_center = -3.5
+            self.d_width = 1.5
+            self.d_s_sample = 1.5
+        elif direction == 0:
+            self.d_center = 0
+            self.d_width = 1.5
+            self.d_s_sample = 1.5
+        elif direction == 1:
+            self.d_center = 3.5
+            self.d_width = 1.5
+            self.d_s_sample = 1.5
+
 
 
 class quintic_polynomial:

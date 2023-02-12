@@ -27,7 +27,7 @@ import os
 import sys
 import time
 import numpy as np
-
+import _thread
 
 from numpy import genfromtxt
 import scipy.signal as signal
@@ -49,7 +49,6 @@ from modules.dreamview.proto import chart_pb2
 ## local package
 from Agent.zzz.dynamic_map import DynamicMap
 from Agent.zzz.frenet import Frenet_path
-from Agent.zzz.JunctionTrajectoryPlanner import JunctionTrajectoryPlanner
 from Agent.zzz.JunctionTrajectoryPlanner_simple_predict import JunctionTrajectoryPlanner_SP
 
 from Agent.zzz.dynamic_map import Lane, Lanepoint, Vehicle
@@ -63,6 +62,9 @@ from matplotlib import pyplot as plt
 
 # TODO(all): hard-coded path temporarily. Better approach needed.
 APOLLO_ROOT = "/apollo"
+
+target_v_list = [[0,30/3.6],[21,20/3.6],[120,25/3.6],[300,10/3.6],[340,25/3.6],[560,10/3.6],[610,40/3.6]] #eath item [s,v] after each s, the target velocity change to v
+intersection_s_list = [340] # the obs 
 
 class RtkPlayer(object):
     """
@@ -140,8 +142,6 @@ class RtkPlayer(object):
         # self.yaw =  self.xyzw2yaw()
         self.yaw = self.localization.pose.heading
 
-
-
     def prediction_callback(self, data):
         self.prediction.CopyFrom(data)
         # self.logger.info(self.prediction)
@@ -159,14 +159,10 @@ class RtkPlayer(object):
         # optional CIPVInfo cipv_info = 5;  // Closest In Path Vehicle (CIPV)
         # }
 
-
     def routing_callback(self, data):
         self.routing.CopyFrom(data)
         # print(self.rounting)
         # self.logger.info(self.rounting)
-
-
-
 
     def chassis_callback(self, data):
         """
@@ -233,7 +229,6 @@ class RtkPlayer(object):
         # self.logger.debug("Generated Planning Sequence: "
         #                   + str(self.sequence_num - 1))
 
-
     def publish_planningmsg_start(self):
         """
         Generate New Path
@@ -295,8 +290,6 @@ class RtkPlayer(object):
         # self.logger.debug("Generated Planning Sequence: "
         #                   + str(self.sequence_num - 1))
 
-    
-
     def publish_planningmsg_trajectory(self, trajectory, action_id):
         # print("trajectory.trajectory",trajectory.trajectory)
         if not self.localization_received:
@@ -332,9 +325,11 @@ class RtkPlayer(object):
                 self.stop_count += 1 
         
             trajectory = self.brake_trajectory
+            start_time = 0.1 * self.stop_count
         else:
             self.brake_trajectory = None
             self.stop_count = 0
+            start_time = 0
 
         for i in range(len(trajectory.trajectory)-2):
             adc_point = pnc_point_pb2.TrajectoryPoint()
@@ -352,9 +347,9 @@ class RtkPlayer(object):
             # time_diff = self.data['time'][i] - \
             #     self.data['time'][0]
 
-            time_diff = 0.1*i
+            time_diff = 0.1*i - start_time
 
-            adc_point.relative_time = time_diff  - (now - self.starttime)
+            adc_point.relative_time = time_diff 
 
             planningdata.trajectory_point.extend([adc_point])
         # if action_id == 0:
@@ -365,8 +360,8 @@ class RtkPlayer(object):
         planningdata.estop.is_estop = False
     
         self.planning_pub.write(planningdata)
-        self.logger.debug("Generated Planning Sequence: "
-                        + str(self.sequence_num - 1))
+        # self.logger.debug("Generated Planning Sequence: "
+        #                 + str(self.sequence_num - 1))
 
     def shutdown(self):
         """
@@ -396,7 +391,8 @@ class RtkPlayer(object):
                                                     obs_info.position.y,
                                                     obs_info.velocity.x,
                                                     obs_info.velocity.y,
-                                                    obs_info.theta]
+                                                    obs_info.theta,
+                                                    obs_info.type]
                 obs.append(surrouding_obs)
         return obs
 
@@ -404,7 +400,15 @@ class Werling_planner_SP():
     def  __init__(self,):
         self.trajectory_planner = JunctionTrajectoryPlanner_SP()
         self.dynamic_map = DynamicMap()
+        self.dynamic_map.add_target_v_on_s(target_v_list)
         self.read_ref_path_from_file()
+
+        # for traffic light
+        _thread.start_new_thread(self.get_keyboard,())
+        self.traffic_light_obs = True
+
+        self.using_prdiction = True
+
     
     def update_path(self, obs, done):# TODO: represent a obs
         if done or len(obs)<1:
@@ -412,17 +416,28 @@ class Werling_planner_SP():
             return None, None
         else:
             self.dynamic_map.update_map_from_list_obs(obs)
+            if self.trajectory_planner.csp is not None and self.traffic_light_obs:
+                self.dynamic_map.generate_intersection_obs(intersection_s_list, self.trajectory_planner.csp)
+            
 
-            trajectory_action, index = self.trajectory_planner.trajectory_update(self.dynamic_map)
+            self.trajectory_planner.generate_low_level_trajectory_for_dns(v_target=20, direction=1, dynamic_map=self.dynamic_map)
+
+            if self.using_prdiction:
+                trajectory_action, index = self.trajectory_planner.trajectory_update(self.dynamic_map)
+            else:
+                candidate_trajectories_tuple = self.trajectory_planner.generate_candidate_trajectories(self.dynamic_map)
+                index = 2
 
             chosen_action_id = index
-            print("action_index",chosen_action_id)
             chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
-            # print("chosen_",chosen_trajectory.trajectory)
+
+            print("[Action_ID]",chosen_action_id)
+            print("[Traffic_Light]",self.traffic_light_obs)
+
             return chosen_trajectory, chosen_action_id
     
     def read_ref_path_from_file(self):
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
+        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage4_length.csv')
         # record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang_indside.csv')
 
         try:
@@ -449,55 +464,16 @@ class Werling_planner_SP():
         self.ref_path.speed_limit = 60/3.6 # m/s
         self.dynamic_map.update_ref_path_from_routing(self.ref_path) 
 
-class Werling_planner():
-    def  __init__(self,):
-        self.trajectory_planner = JunctionTrajectoryPlanner()
-        self.dynamic_map = DynamicMap()
-        self.read_ref_path_from_file()
-    
-    def update_path(self, obs, done):# TODO: represent a obs
-        if done or len(obs)<1:
-            self.trajectory_planner.clear_buff(clean_csp=False)
-            return None, None
-        else:
-            self.dynamic_map.update_map_from_list_obs(obs)
 
-
-            candidate_trajectories_tuple = self.trajectory_planner.generate_candidate_trajectories(self.dynamic_map)
-
-            chosen_action_id = 2
-            chosen_trajectory = self.trajectory_planner.trajectory_update_CP(chosen_action_id)
-
-            return chosen_trajectory, chosen_action_id
-    
-    def read_ref_path_from_file(self):
-        record_file = os.path.join(APOLLO_ROOT, 'data/log/garage3.csv')
-        # record_file = os.path.join(APOLLO_ROOT, 'data/log/yizhuang1.csv')
-        try:
-            file_handler = open(record_file, 'r')
-        except (FileNotFoundError, IOError) as ex:
-            self.logger.error("Error opening {}: {}".format(record_file, ex))
-            sys.exit(1)
-
-        self.data = genfromtxt(file_handler, delimiter=',', names=True)
-        file_handler.close()
-        t_array = []
-        self.ref_path = Lane()
-
-
-
-        for i in range(0,len(self.data)//100): # The Apollo record data is too dense!
-            lanepoint = Lanepoint()
-            lanepoint.position.x = self.data['x'][i*90]
-            lanepoint.position.y = self.data['y'][i*90]
-            # print("ref path", lanepoint.position.x, lanepoint.position.y)
-            self.ref_path.central_path.append(lanepoint)
-            t_array.append(lanepoint)
-        self.ref_path.central_path_array = np.array(t_array)
-        self.ref_path.speed_limit = 60/3.6 # m/s
-        self.dynamic_map.update_ref_path_from_routing(self.ref_path) 
-
-
+    def get_keyboard(self):
+        while(1):
+            keyboard_input = input("Keyboard_Init")
+            # print("----------------Received Signal",keyboard_input)
+            if self.traffic_light_obs:
+                self.traffic_light_obs = False
+            else:
+                self.traffic_light_obs = True
+            
 
 def main():
     """
