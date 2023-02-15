@@ -5,7 +5,7 @@ from matplotlib.gridspec import GridSpec
 import pandas as pd
 
 file_path = "../Data/egodata/"
-file_name = "case1-1"
+file_name = "case3-2"
 
 print(file_path+file_name+".csv")
 df = pd.read_csv(file_path+file_name+".csv")
