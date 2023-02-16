@@ -12,7 +12,7 @@ df = pd.read_csv(file_path+file_name+".csv")
 df_env = pd.read_csv(file_path+file_name + "env.csv")
 
 # 创建3行2列的子图布局
-fig, axs = plt.subplots(nrows=4, ncols=2, figsize=(14, 8))
+fig, ax4 = plt.subplots(nrows=1, ncols=1, figsize=(4, 8))
 x = df["x"]
 y = df["y"]
 time = df["timestamp"] - df["timestamp"][0]
@@ -23,34 +23,18 @@ df["acc"] = (df["accx"]**2+ df["accy"]**2)**0.5
 
 steering = df["steering_percentage"]
 
-print(accx)
 
 # 创建GridSpec布局，将右侧的子图设置为占据2个位置
-gs = GridSpec(3, 2)
-ax1 = plt.subplot(gs[0, 0])
-ax2 = plt.subplot(gs[1, 0])
-ax3 = plt.subplot(gs[2, 0])
-ax4 = plt.subplot(gs[:, 1])
+# gs = GridSpec(3, 2)
+
+
 # ax4 = axs[:,1]
 
 # 绘制子图
-ax1.plot(accx )
-ax1.plot(accy )
-ax1.set_title('Acc')
-ax1.set_xlabel("time t(s)")
 
 
-
-ax3.plot(time,steering)
-ax3.set_xlabel("time t(s)")
-ax3.set_ylabel("steering")
-
-ax2.plot(time,speed*3.6)
-ax2.set_xlabel("time t(s)")
-ax2.set_title('speed')
-
-cax=ax4.scatter(x,y, c=time,cmap="viridis",label = "ego")
-ax4.scatter(df_env["x"],df_env["y"], s = 1,c=df_env["timestamp"],cmap="viridis",label = "env")
+cax=ax4.scatter(x,y, c=time,cmap="viridis",label = "ego",s = 2)
+ax4.scatter(df_env["x"],df_env["y"], s = 1,c=df_env["timestamp"],cmap="viridis",label = "env",marker = '^')
 ax4.set_xlabel("UTM x(m)")
 ax4.set_ylabel("UTM y(m)")
 ax4.set_title('Trajectory of ego vehicle')
@@ -61,6 +45,7 @@ if file_name ==  "case1-1":
     ax4.set_xlim(458500, 458600)
     ax4.set_ylim(4399900,4400200)
     # ax4.axis('equal')
+    ax4.set_aspect('equal')
 
 
 

@@ -9,13 +9,17 @@ file_name = "case1-1"
 
 print(file_path+file_name+".csv")
 df = pd.read_csv(file_path+file_name+".csv")
+
+df = df[(df["timestamp"]>=1676356930)]
+a =df["timestamp"]
 df_env = pd.read_csv(file_path+file_name + "env.csv")
 
 # 创建3行2列的子图布局
-fig, axs = plt.subplots(nrows=4, ncols=2, figsize=(14, 8))
+fig, axs = plt.subplots(nrows=3, ncols=2, figsize=(12, 9))
 x = df["x"]
 y = df["y"]
-time = df["timestamp"] - df["timestamp"][0]
+time = df["timestamp"]
+
 speed = df["speed_mps"]
 accx = df["accx"]
 accy = df["accy"]
@@ -23,19 +27,19 @@ df["acc"] = (df["accx"]**2+ df["accy"]**2)**0.5
 
 steering = df["steering_percentage"]
 
-print(accx)
+
 
 # 创建GridSpec布局，将右侧的子图设置为占据2个位置
-gs = GridSpec(3, 2)
-ax1 = plt.subplot(gs[0, 0])
-ax2 = plt.subplot(gs[1, 0])
-ax3 = plt.subplot(gs[2, 0])
-ax4 = plt.subplot(gs[:, 1])
+gs = GridSpec(3, 4)
+ax1 = plt.subplot(gs[0, 0:3])
+ax2 = plt.subplot(gs[1, 0:3])
+ax3 = plt.subplot(gs[2, 0:3])
+ax4 = plt.subplot(gs[:, 3])
 # ax4 = axs[:,1]
 
 # 绘制子图
-ax1.plot(accx )
-ax1.plot(accy )
+ax1.plot(time,accx)
+ax1.plot(time,accy )
 ax1.set_title('Acc')
 ax1.set_xlabel("time t(s)")
 
@@ -58,8 +62,9 @@ ax4.set_title('Trajectory of ego vehicle')
 ax4.legend()
 
 if file_name ==  "case1-1":
-    ax4.set_xlim(458500, 458600)
-    ax4.set_ylim(4399900,4400200)
+    print(1111)
+    ax4.set_xlim(458550, 458600)
+    ax4.set_ylim(4399950,4400100)
     # ax4.axis('equal')
 
 
